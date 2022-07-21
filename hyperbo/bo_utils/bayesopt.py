@@ -31,7 +31,7 @@ import numpy as np
 import tensorflow as tf
 
 SubDataset = defs.SubDataset
-INPUT_SAMPLERS = const.INPUT_SAMPLERS
+# INPUT_SAMPLERS = const.INPUT_SAMPLERS
 
 
 def bayesopt(key: Any, model: gp.GP, sub_dataset_key: Union[int, str],
@@ -215,6 +215,7 @@ def run_synthetic(dataset,
             sub_dataset.y), (queried_sub_dataset.x,
                              queried_sub_dataset.y), model.params.__dict__
   else:
+    '''
     _, sample_key = jax.random.split(key)
     sub_dataset = bayesopt(
         key=sample_key,
@@ -226,6 +227,8 @@ def run_synthetic(dataset,
         input_sampler=INPUT_SAMPLERS[data_loader_name])
     return (sub_dataset.x,
             sub_dataset.y), None, model.params.__dict__
+    '''
+    assert False
 
 
 def _onehot_matrix(shape, idx) -> np.ndarray:
