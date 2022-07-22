@@ -229,7 +229,6 @@ def run_synthetic(dataset,
         input_sampler=INPUT_SAMPLERS[data_loader_name])
     return (sub_dataset.x,
             sub_dataset.y), None, model.params.__dict__
-    assert False
 
 
 def _onehot_matrix(shape, idx) -> np.ndarray:
