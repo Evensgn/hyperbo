@@ -243,14 +243,14 @@ def test_estimated_prior(key, cov_func, opt_method, ac_func, n_dim, n_dataset_fu
 if __name__ == '__main__':
     results = {}
 
-    experiment_name = 'test_estimated_prior_visualize_5'
-    n_workers = 1
-    n_dim = 1
+    experiment_name = 'test_estimated_prior_visualize_6'
+    n_workers = 96
+    n_dim = 2
     n_dataset_funcs = 100
     n_discrete_points = 100
-    n_test_funcs = 1
+    n_test_funcs = 96
     budget = 50
-    n_bo_runs = 1
+    n_bo_runs = 3
     visualize_bo = True
 
     results['experiment_name'] = experiment_name
