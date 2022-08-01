@@ -81,8 +81,8 @@ def test_bo(key, cov_func, gp_params, warp_func, queried_sub_datasets, ac_func, 
     return regrets_mean, regrets_std
 
 
-def test_estimated_prior(key, cov_func, opt_method, ac_func, n_dim, n_dataset_funcs, n_discrete_points, n_test_funcs,
-                         budget, n_bo_runs, visualize_bo):
+def test_estimated_prior(key, cov_func, lengthscale, noise_variance, objective, opt_method, ac_func, n_dim, n_dataset_funcs, n_discrete_points,
+                         n_test_funcs, budget, n_bo_runs, visualize_bo):
     # infer GP parameters from history functions
     key, _ = jax.random.split(key)
 
@@ -90,9 +90,9 @@ def test_estimated_prior(key, cov_func, opt_method, ac_func, n_dim, n_dataset_fu
     params = GPParams(
         model={
             'constant': 5.,
-            'lengthscale': 1.,
+            'lengthscale': lengthscale,
             'signal_variance': 1.0,
-            'noise_variance': 0.01,
+            'noise_variance': noise_variance,
         })
     if cov_func in [
         kernel.squared_exponential_mlp, kernel.matern32_mlp, kernel.matern52_mlp
@@ -112,10 +112,10 @@ def test_estimated_prior(key, cov_func, opt_method, ac_func, n_dim, n_dataset_fu
     logging.info(msg=f'params = {params}')
 
     key, init_key = jax.random.split(key)
-    vy = gp.sample_from_gp(key, mean_func, cov_func, params, vx, num_samples=n_dataset_funcs)
-    dataset = []
+    dataset = [(vx, gp.sample_from_gp(key, mean_func, cov_func, params, vx, num_samples=n_dataset_funcs), 'all_data')]
+    vy = dataset[0][1]
     for i in range(vy.shape[1]):
-      dataset.append((vx, vy[:, i:i+1]))
+        dataset.append((vx, vy[:, i:i+1]))
 
     # minimize nll
     init_params = GPParams(
@@ -131,7 +131,7 @@ def test_estimated_prior(key, cov_func, opt_method, ac_func, n_dim, n_dataset_fu
             'maxiter':
                 5,
             'logging_interval': 1,
-            'objective': obj.nll,
+            'objective': objective,
             'batch_size': 100,
             'learning_rate': 0.001,
         })
@@ -147,6 +147,15 @@ def test_estimated_prior(key, cov_func, opt_method, ac_func, n_dim, n_dataset_fu
 
     model.initialize_params(init_key)
 
+    def reg(gpparams, gpwarp_func=None):
+      return obj.sample_mean_cov_regularizer(
+          mean_func=model.mean_func,
+          cov_func=model.cov_func,
+          params=gpparams,
+          dataset=model.dataset,
+          warp_func=gpwarp_func,
+          distance=utils.kl_multivariate_normal)
+
     def nll_func(gpparams, gpwarp_func=None):
         return obj.neg_log_marginal_likelihood(
           mean_func=model.mean_func,
@@ -155,7 +164,9 @@ def test_estimated_prior(key, cov_func, opt_method, ac_func, n_dim, n_dataset_fu
           dataset=model.dataset,
           warp_func=gpwarp_func)
 
+    ground_truth_reg = reg(params)
     ground_truth_nll = nll_func(params)
+    init_reg = reg(init_params, warp_func)
     init_nll = nll_func(init_params, warp_func)
 
     inferred_params = model.train()
@@ -164,11 +175,18 @@ def test_estimated_prior(key, cov_func, opt_method, ac_func, n_dim, n_dataset_fu
     retrieved_inferred_params = dict(
         zip(keys, retrieve_params(inferred_params, keys, warp_func=warp_func)))
     print('retrieved_inferred_params = {}'.format(retrieved_inferred_params))
+
+    inferred_reg = reg(inferred_params, warp_func)
     inferred_nll = nll_func(inferred_params, warp_func)
 
-    assert (init_nll > inferred_nll)
     print('init_nll = {}, inferred_nll = {}, ground_truth_nll = {}'.format(init_nll, inferred_nll, ground_truth_nll))
+    print('init_reg = {}, inferred_reg = {}, ground_truth_reg = {}'.format(init_reg, inferred_reg, ground_truth_reg))
+
+    assert (init_nll > inferred_nll)
+    # assert (init_reg > inferred_reg)
+
     nll_logs = (init_nll, inferred_nll, ground_truth_nll)
+    reg_logs = (init_reg, inferred_reg, ground_truth_reg)
 
     # compare inferred params with ground truth params
     # generate test functions
@@ -236,14 +254,15 @@ def test_estimated_prior(key, cov_func, opt_method, ac_func, n_dim, n_dataset_fu
     else:
         visualize_bo_results = None
 
-    return results_groundtruth, results_inferred, results_random, nll_logs, params, retrieved_inferred_params, \
+    return results_groundtruth, results_inferred, results_random, nll_logs, reg_logs, params, retrieved_inferred_params, \
            visualize_bo_results
 
 
 if __name__ == '__main__':
     results = {}
 
-    experiment_name = 'test_estimated_prior_visualize_6'
+    experiment_name = 'test_estimated_prior_17_ei_lengthscale_0.05'
+
     n_workers = 96
     n_dim = 2
     n_dataset_funcs = 100
@@ -251,7 +270,34 @@ if __name__ == '__main__':
     n_test_funcs = 96
     budget = 50
     n_bo_runs = 3
+    visualize_bo = False
+    ac_func_type = 'ei'
+    noise_variance = 1e-6
+    length_scale = 0.05
+    '''
+    n_workers = 96
+    n_dim = 1
+    n_dataset_funcs = 100
+    n_discrete_points = 100
+    n_test_funcs = 1
+    budget = 50
+    n_bo_runs = 1
     visualize_bo = True
+    ac_func_type = 'ucb'
+    noise_variance = 1e-6
+    length_scale = 0.05
+    '''
+
+    if ac_func_type == 'ucb':
+        ac_func = acfun.ucb
+    elif ac_func_type == 'ei':
+        ac_func = acfun.ei
+    elif ac_func_type == 'pi':
+        ac_func = acfun.pi
+    elif ac_func_type == 'rand':
+        ac_func = acfun.rand
+    else:
+        raise ValueError('Unknown ac_func_type: {}'.format(ac_func_type))
 
     results['experiment_name'] = experiment_name
     results['n_workers'] = n_workers
@@ -261,22 +307,35 @@ if __name__ == '__main__':
     results['n_test_funcs'] = n_test_funcs
     results['budget'] = budget
     results['n_bo_runs'] = n_bo_runs
+    results['visualize_bo'] = visualize_bo
+    results['ac_func_type'] = ac_func_type
+    results['noise_variance'] = noise_variance
+    results['length_scale'] = length_scale
 
     DEFAULT_WARP_FUNC = utils.DEFAULT_WARP_FUNC
     GPParams = defs.GPParams
     retrieve_params = params_utils.retrieve_params
 
     kernel_list = [
-        ('squared_exponential nll', kernel.squared_exponential, 'lbfgs'),
-        ('matern32 nll', kernel.matern32, 'lbfgs'),
-        ('matern52 nll', kernel.matern52, 'lbfgs'),
-        # ('matern32_mlp nll', kernel.matern32_mlp, 'lbfgs'),
-        # ('matern52_mlp nll', kernel.matern52_mlp, 'lbfgs'),
-        # ('squared_exponential_mlp nll', kernel.squared_exponential_mlp, 'lbfgs'),
-        # ('dot_product_mlp nll', kernel.dot_product_mlp, 'lbfgs'),
-        # ('squared_exponential euclidean', kernel.squared_exponential, 'lbfgs'),
-        # ('dot_product_mlp nll adam', kernel.dot_product_mlp, 'adam'),
-        # ('squared_exponential_mlp nll adam', kernel.squared_exponential_mlp, 'adam')
+        ('squared_exponential nll', kernel.squared_exponential, obj.nll, 'lbfgs'),
+        ('matern32 nll', kernel.matern32, obj.nll, 'lbfgs'),
+        ('matern52 nll', kernel.matern52, obj.nll, 'lbfgs'),
+        # ('matern32_mlp nll', kernel.matern32_mlp, obj.nll, 'lbfgs'),
+        # ('matern52_mlp nll', kernel.matern52_mlp, obj.nll, 'lbfgs'),
+        # ('squared_exponential_mlp nll', kernel.squared_exponential_mlp, obj.nll, 'lbfgs'),
+        # ('dot_product_mlp nll', kernel.dot_product_mlp, obj.nll, 'lbfgs'),
+        # ('dot_product_mlp nll adam', kernel.dot_product_mlp, obj.nll, 'adam'),
+        # ('squared_exponential_mlp nll adam', kernel.squared_exponential_mlp, obj.nll, 'adam'),
+
+        ('squared_exponential kl', kernel.squared_exponential, obj.kl, 'lbfgs'),
+        ('matern32 kl', kernel.matern32, obj.kl, 'lbfgs'),
+        ('matern52 kl', kernel.matern52, obj.kl, 'lbfgs'),
+        # ('matern32_mlp kl', kernel.matern32_mlp, obj.kl, 'lbfgs'),
+        # ('matern52_mlp kl', kernel.matern52_mlp, obj.kl, 'lbfgs'),
+        # ('squared_exponential_mlp kl', kernel.squared_exponential_mlp, obj.kl, 'lbfgs'),
+        # ('dot_product_mlp kl', kernel.dot_product_mlp, obj.kl, 'lbfgs'),
+        # ('dot_product_mlp kl adam', kernel.dot_product_mlp, obj.kl, 'adam'),
+        # ('squared_exponential_mlp kl adam', kernel.squared_exponential_mlp, obj.kl, 'adam')
     ]
 
     pool = ProcessingPool(nodes=n_workers)
@@ -290,10 +349,10 @@ if __name__ == '__main__':
     results['kernel_results'] = {}
 
     for i, kernel_type in enumerate(kernel_list):
-        results_groundtruth, results_inferred, results_random, nll_logs, params, retrieved_inferred_params, \
+        results_groundtruth, results_inferred, results_random, nll_logs, reg_logs, params, retrieved_inferred_params, \
             visualize_bo_results = test_estimated_prior(
-            keys[i], kernel_type[1], kernel_type[2], acfun.ucb, n_dim, n_dataset_funcs, n_discrete_points,
-            n_test_funcs, budget, n_bo_runs, visualize_bo
+            keys[i], kernel_type[1], length_scale, noise_variance, kernel_type[2], kernel_type[3], ac_func, n_dim,
+            n_dataset_funcs, n_discrete_points, n_test_funcs, budget, n_bo_runs, visualize_bo
         )
         regrets_mean_groundtruth, regrets_std_groundtruth = results_groundtruth
         regrets_mean_inferred, regrets_std_inferred = results_inferred
@@ -307,6 +366,7 @@ if __name__ == '__main__':
             'regrets_mean_random': regrets_mean_random,
             'regrets_std_random': regrets_std_random,
             'nll_logs': nll_logs,
+            'reg_logs': reg_logs,
             'params': params,
             'retrieved_inferred_params': retrieved_inferred_params,
             'visualize_bo_results': visualize_bo_results
