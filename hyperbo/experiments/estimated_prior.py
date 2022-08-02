@@ -19,6 +19,7 @@ import numpy as np
 from pathos.multiprocessing import ProcessingPool
 import os
 import plot
+import datetime
 
 
 def run_bo(run_args):
@@ -81,8 +82,9 @@ def test_bo(key, cov_func, gp_params, warp_func, queried_sub_datasets, ac_func, 
     return regrets_mean, regrets_std
 
 
-def test_estimated_prior(key, cov_func, lengthscale, noise_variance, objective, opt_method, ac_func, n_dim, n_dataset_funcs, n_discrete_points,
-                         n_test_funcs, budget, n_bo_runs, visualize_bo):
+def test_estimated_prior(key, cov_func, lengthscale, noise_variance, objective, opt_method, ac_func, n_dim,
+                         n_dataset_funcs, n_discrete_points, n_test_funcs, budget, n_bo_runs, visualize_bo,
+                         gp_fit_maxiter):
     # infer GP parameters from history functions
     key, _ = jax.random.split(key)
 
@@ -129,7 +131,7 @@ def test_estimated_prior(key, cov_func, lengthscale, noise_variance, objective, 
             'method':
                 opt_method,
             'maxiter':
-                5,
+                gp_fit_maxiter,
             'logging_interval': 1,
             'objective': objective,
             'batch_size': 100,
@@ -261,11 +263,11 @@ def test_estimated_prior(key, cov_func, lengthscale, noise_variance, objective, 
 if __name__ == '__main__':
     results = {}
 
-    experiment_name = 'test_estimated_prior_17_ei_lengthscale_0.05'
+    experiment_name = 'test_estimated_prior_{}'.format(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
 
     n_workers = 96
     n_dim = 2
-    n_dataset_funcs = 100
+    n_dataset_funcs = 1
     n_discrete_points = 100
     n_test_funcs = 96
     budget = 50
@@ -274,10 +276,12 @@ if __name__ == '__main__':
     ac_func_type = 'ei'
     noise_variance = 1e-6
     length_scale = 0.05
+    gp_fit_maxiter = 100
+
     '''
-    n_workers = 96
+    n_workers = 1
     n_dim = 1
-    n_dataset_funcs = 100
+    n_dataset_funcs = 1
     n_discrete_points = 100
     n_test_funcs = 1
     budget = 50
@@ -286,7 +290,9 @@ if __name__ == '__main__':
     ac_func_type = 'ucb'
     noise_variance = 1e-6
     length_scale = 0.05
+    gp_fit_maxiter = 100
     '''
+
 
     if ac_func_type == 'ucb':
         ac_func = acfun.ucb
@@ -352,7 +358,7 @@ if __name__ == '__main__':
         results_groundtruth, results_inferred, results_random, nll_logs, reg_logs, params, retrieved_inferred_params, \
             visualize_bo_results = test_estimated_prior(
             keys[i], kernel_type[1], length_scale, noise_variance, kernel_type[2], kernel_type[3], ac_func, n_dim,
-            n_dataset_funcs, n_discrete_points, n_test_funcs, budget, n_bo_runs, visualize_bo
+            n_dataset_funcs, n_discrete_points, n_test_funcs, budget, n_bo_runs, visualize_bo, gp_fit_maxiter
         )
         regrets_mean_groundtruth, regrets_std_groundtruth = results_groundtruth
         regrets_mean_inferred, regrets_std_inferred = results_inferred
@@ -385,6 +391,33 @@ if __name__ == '__main__':
     if not os.path.exists(dir_path):
         os.mkdir(dir_path)
     np.save(os.path.join(dir_path, 'results.npy'), results)
+
+    with open(os.path.join(dir_path, 'results.txt'), 'w') as f:
+        f.write('experiment_name = {}\n'.format(experiment_name))
+        f.write('n_workers = {}\n'.format(n_workers))
+        f.write('n_dim = {}\n'.format(n_dim))
+        f.write('n_dataset_funcs = {}\n'.format(n_dataset_funcs))
+        f.write('n_discrete_points = {}\n'.format(n_discrete_points))
+        f.write('n_test_funcs = {}\n'.format(n_test_funcs))
+        f.write('budget = {}\n'.format(budget))
+        f.write('n_bo_runs = {}\n'.format(n_bo_runs))
+        f.write('visualize_bo = {}\n'.format(visualize_bo))
+        f.write('gp_fit_maxiter = {}\n'.format(gp_fit_maxiter))
+        f.write('length_scale = {}\n'.format(length_scale))
+        f.write('noise_variance = {}\n'.format(noise_variance))
+        f.write('ac_func_type = {}\n'.format(ac_func_type))
+        f.write('kernel_list = {}\n'.format(kernel_list))
+        f.write('\n')
+        for kernel_type in kernel_list:
+            f.write('>>> kernel_type = {}:\n'.format(kernel_type[0]))
+            f.write('regret_mean_groundtruth = {}\n'.format(results['kernel_results'][kernel_type[0]]['regrets_mean_groundtruth'][-1]))
+            f.write('regret_mean_inferred = {}\n'.format(results['kernel_results'][kernel_type[0]]['regrets_mean_inferred'][-1]))
+            f.write('regret_mean_random = {}\n'.format(results['kernel_results'][kernel_type[0]]['regrets_mean_random'][-1]))
+            f.write('nll_logs = {}\n'.format(results['kernel_results'][kernel_type[0]]['nll_logs']))
+            f.write('reg_logs = {}\n'.format(results['kernel_results'][kernel_type[0]]['reg_logs']))
+            f.write('params = {}\n'.format(results['kernel_results'][kernel_type[0]]['params']))
+            f.write('retrieved_inferred_params = {}\n'.format(results['kernel_results'][kernel_type[0]]['retrieved_inferred_params']))
+            f.write('\n')
 
     # call the plotting code
     plot.plot_estimated_prior(results)
