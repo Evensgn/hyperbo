@@ -20,6 +20,12 @@ from pathos.multiprocessing import ProcessingPool
 import os
 import plot
 import datetime
+import argparse
+
+
+DEFAULT_WARP_FUNC = utils.DEFAULT_WARP_FUNC
+GPParams = defs.GPParams
+retrieve_params = params_utils.retrieve_params
 
 
 def run_bo(run_args):
@@ -62,8 +68,7 @@ def run_bo(run_args):
     return observations, regrets
 
 
-def test_bo(key, cov_func, gp_params, warp_func, queried_sub_datasets, ac_func, budget, n_bo_runs):
-    global pool
+def test_bo(pool, key, cov_func, gp_params, warp_func, queried_sub_datasets, ac_func, budget, n_bo_runs):
     task_list = []
     keys = jax.random.split(key, len(queried_sub_datasets) * n_bo_runs + 1)
     key_idx = 0
@@ -82,13 +87,19 @@ def test_bo(key, cov_func, gp_params, warp_func, queried_sub_datasets, ac_func, 
     return regrets_mean, regrets_std
 
 
-def test_estimated_prior(key, cov_func, lengthscale, noise_variance, objective, opt_method, ac_func, n_dim,
+def test_estimated_prior(pool, key, cov_func, lengthscale, noise_variance, objective, opt_method, ac_func, n_dim,
                          n_dataset_funcs, n_discrete_points, n_test_funcs, budget, n_bo_runs, visualize_bo,
-                         gp_fit_maxiter):
+                         gp_fit_maxiter, different_domain):
     # infer GP parameters from history functions
     key, _ = jax.random.split(key)
 
+    # discrete domain of test functions
     vx = jax.random.uniform(key, (n_discrete_points, n_dim))
+    # discrete domain of dataset functions
+    if different_domain:
+        vx_dataset = jax.random.uniform(key, (n_discrete_points, n_dim)) * different_domain
+    else:
+        vx_dataset = vx
     params = GPParams(
         model={
             'constant': 5.,
@@ -101,23 +112,23 @@ def test_estimated_prior(key, cov_func, lengthscale, noise_variance, objective, 
     ]:
       params.config['mlp_features'] = (8,)
       key, _ = jax.random.split(key)
-      bf.init_mlp_with_shape(key, params, vx.shape)
+      bf.init_mlp_with_shape(key, params, vx_dataset.shape)
     elif cov_func == kernel.dot_product_mlp:
       key, _ = jax.random.split(key)
       params.model['dot_prod_sigma'] = jax.random.normal(key, (8, 8 * n_dim))
       params.model['dot_prod_bias'] = 0.
       params.config['mlp_features'] = (8,)
       key, _ = jax.random.split(key)
-      bf.init_mlp_with_shape(key, params, vx.shape)
+      bf.init_mlp_with_shape(key, params, vx_dataset.shape)
 
     mean_func = mean.constant
     logging.info(msg=f'params = {params}')
 
     key, init_key = jax.random.split(key)
-    dataset = [(vx, gp.sample_from_gp(key, mean_func, cov_func, params, vx, num_samples=n_dataset_funcs), 'all_data')]
+    dataset = [(vx_dataset, gp.sample_from_gp(key, mean_func, cov_func, params, vx_dataset, num_samples=n_dataset_funcs), 'all_data')]
     vy = dataset[0][1]
     for i in range(vy.shape[1]):
-        dataset.append((vx, vy[:, i:i+1]))
+        dataset.append((vx_dataset, vy[:, i:i+1]))
 
     # minimize nll
     init_params = GPParams(
@@ -137,6 +148,20 @@ def test_estimated_prior(key, cov_func, lengthscale, noise_variance, objective, 
             'batch_size': 100,
             'learning_rate': 0.001,
         })
+
+    if cov_func in [
+        kernel.squared_exponential_mlp, kernel.matern32_mlp, kernel.matern52_mlp
+    ]:
+      init_params.config['mlp_features'] = (8,)
+      key, _ = jax.random.split(key)
+      bf.init_mlp_with_shape(key, init_params, vx.shape)
+    elif cov_func == kernel.dot_product_mlp:
+      key, _ = jax.random.split(key)
+      init_params.model['dot_prod_sigma'] = jax.random.normal(key, (8, 8 * 2))
+      init_params.model['dot_prod_bias'] = 0.
+      init_params.config['mlp_features'] = (8,)
+      key, _ = jax.random.split(key)
+      bf.init_mlp_with_shape(key, init_params, vx.shape)
 
     warp_func = DEFAULT_WARP_FUNC
 
@@ -199,10 +224,10 @@ def test_estimated_prior(key, cov_func, lengthscale, noise_variance, objective, 
         queried_sub_datasets.append(defs.SubDataset(x=vx, y=y_queries[:, i:i+1]))
 
     key_1, key_2, key_3, key = jax.random.split(key, 4)
-    results_groundtruth = test_bo(key_1, cov_func, params, None, queried_sub_datasets, ac_func, budget, n_bo_runs)
-    results_inferred = test_bo(key_2, cov_func, inferred_params, warp_func, queried_sub_datasets, ac_func, budget,
+    results_groundtruth = test_bo(pool, key_1, cov_func, params, None, queried_sub_datasets, ac_func, budget, n_bo_runs)
+    results_inferred = test_bo(pool, key_2, cov_func, inferred_params, warp_func, queried_sub_datasets, ac_func, budget,
                                n_bo_runs)
-    results_random = test_bo(key_3, cov_func, params, None, queried_sub_datasets, acfun.rand, budget, n_bo_runs)
+    results_random = test_bo(pool, key_3, cov_func, params, None, queried_sub_datasets, acfun.rand, budget, n_bo_runs)
 
     if visualize_bo and n_dim == 1:
         n_visualize_grid_points = 100
@@ -233,25 +258,34 @@ def test_estimated_prior(key, cov_func, lengthscale, noise_variance, objective, 
         )
         posterior_list = []
         for i in range(budget):
-            only_dataset = {'only': defs.SubDataset(observations_groundtruth[0][:i], observations_groundtruth[1][:i])}
-            gp_groundtruth.set_dataset(only_dataset)
-            gp_inferred.set_dataset(only_dataset)
-            mean_groundtruth, var_groundtruth = gp_groundtruth.predict(f_x, 'only')
-            mean_inferred, var_inferred = gp_inferred.predict(f_x, 'only')
+            observations_dataset = {
+                'groundtruth': defs.SubDataset(observations_groundtruth[0][:i], observations_groundtruth[1][:i]),
+                'inferred': defs.SubDataset(observations_inferred[0][:i], observations_inferred[1][:i])
+            }
+            gp_groundtruth.set_dataset(observations_dataset)
+            gp_inferred.set_dataset(observations_dataset)
+            mean_groundtruth, var_groundtruth = gp_groundtruth.predict(f_x, 'groundtruth')
+            mean_inferred_on_groundtruth, var_inferred_on_groundtruth = gp_inferred.predict(f_x, 'groundtruth')
+            mean_inferred_on_inferred, var_inferred_on_inferred = gp_inferred.predict(f_x, 'inferred')
             std_groundtruth = jnp.sqrt(var_groundtruth)
-            std_inferred = jnp.sqrt(var_inferred)
+            std_inferred_on_groundtruth = jnp.sqrt(var_inferred_on_groundtruth)
+            std_inferred_on_inferred = jnp.sqrt(var_inferred_on_inferred)
             posterior_list.append({
                 'mean_groundtruth': mean_groundtruth,
                 'std_groundtruth': std_groundtruth,
-                'mean_inferred': mean_inferred,
-                'std_inferred': std_inferred
+                'mean_inferred_on_groundtruth': mean_inferred_on_groundtruth,
+                'std_inferred_on_groundtruth': std_inferred_on_groundtruth,
+                'mean_inferred_on_inferred': mean_inferred_on_inferred,
+                'std_inferred_on_inferred': std_inferred_on_inferred,
             })
 
         visualize_bo_results = {
             'n_visualize_grid_points': n_visualize_grid_points,
             'f_x': f_x,
             'f_y': f_y,
-            'posterior_list': posterior_list
+            'posterior_list': posterior_list,
+            'observations_groundtruth': observations_groundtruth,
+            'observations_inferred': observations_inferred
         }
     else:
         visualize_bo_results = None
@@ -260,11 +294,10 @@ def test_estimated_prior(key, cov_func, lengthscale, noise_variance, objective, 
            visualize_bo_results
 
 
-if __name__ == '__main__':
-    results = {}
-
+def run(n_workers, n_dim, n_dataset_funcs, n_discrete_points, n_test_funcs, n_bo_runs, budget, visualize_bo, ac_func_type, noise_variance, length_scale, gp_fit_maxiter, different_domain):
     experiment_name = 'test_estimated_prior_{}'.format(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
 
+    '''
     n_workers = 96
     n_dim = 2
     n_dataset_funcs = 1
@@ -273,10 +306,11 @@ if __name__ == '__main__':
     budget = 50
     n_bo_runs = 3
     visualize_bo = False
-    ac_func_type = 'ei'
+    ac_func_type = 'ucb'
     noise_variance = 1e-6
     length_scale = 0.05
     gp_fit_maxiter = 100
+    '''
 
     '''
     n_workers = 1
@@ -293,7 +327,6 @@ if __name__ == '__main__':
     gp_fit_maxiter = 100
     '''
 
-
     if ac_func_type == 'ucb':
         ac_func = acfun.ucb
     elif ac_func_type == 'ei':
@@ -304,6 +337,8 @@ if __name__ == '__main__':
         ac_func = acfun.rand
     else:
         raise ValueError('Unknown ac_func_type: {}'.format(ac_func_type))
+
+    results = {}
 
     results['experiment_name'] = experiment_name
     results['n_workers'] = n_workers
@@ -317,25 +352,23 @@ if __name__ == '__main__':
     results['ac_func_type'] = ac_func_type
     results['noise_variance'] = noise_variance
     results['length_scale'] = length_scale
-
-    DEFAULT_WARP_FUNC = utils.DEFAULT_WARP_FUNC
-    GPParams = defs.GPParams
-    retrieve_params = params_utils.retrieve_params
+    results['gp_fit_maxiter'] = gp_fit_maxiter
+    results['different_domain'] = different_domain
 
     kernel_list = [
         ('squared_exponential nll', kernel.squared_exponential, obj.nll, 'lbfgs'),
         ('matern32 nll', kernel.matern32, obj.nll, 'lbfgs'),
         ('matern52 nll', kernel.matern52, obj.nll, 'lbfgs'),
-        # ('matern32_mlp nll', kernel.matern32_mlp, obj.nll, 'lbfgs'),
+        ('matern32_mlp nll', kernel.matern32_mlp, obj.nll, 'lbfgs'),
         # ('matern52_mlp nll', kernel.matern52_mlp, obj.nll, 'lbfgs'),
         # ('squared_exponential_mlp nll', kernel.squared_exponential_mlp, obj.nll, 'lbfgs'),
         # ('dot_product_mlp nll', kernel.dot_product_mlp, obj.nll, 'lbfgs'),
         # ('dot_product_mlp nll adam', kernel.dot_product_mlp, obj.nll, 'adam'),
         # ('squared_exponential_mlp nll adam', kernel.squared_exponential_mlp, obj.nll, 'adam'),
 
-        ('squared_exponential kl', kernel.squared_exponential, obj.kl, 'lbfgs'),
-        ('matern32 kl', kernel.matern32, obj.kl, 'lbfgs'),
-        ('matern52 kl', kernel.matern52, obj.kl, 'lbfgs'),
+        # ('squared_exponential kl', kernel.squared_exponential, obj.kl, 'lbfgs'),
+        # ('matern32 kl', kernel.matern32, obj.kl, 'lbfgs'),
+        # ('matern52 kl', kernel.matern52, obj.kl, 'lbfgs'),
         # ('matern32_mlp kl', kernel.matern32_mlp, obj.kl, 'lbfgs'),
         # ('matern52_mlp kl', kernel.matern52_mlp, obj.kl, 'lbfgs'),
         # ('squared_exponential_mlp kl', kernel.squared_exponential_mlp, obj.kl, 'lbfgs'),
@@ -351,14 +384,14 @@ if __name__ == '__main__':
     keys = jax.random.split(key, len(kernel_list) + 1)
     key = keys[-1]
 
-    results['kernel_list'] = kernel_list
+    results['kernel_list'] = [kernel_type[0] for kernel_type in kernel_list]
     results['kernel_results'] = {}
 
     for i, kernel_type in enumerate(kernel_list):
         results_groundtruth, results_inferred, results_random, nll_logs, reg_logs, params, retrieved_inferred_params, \
             visualize_bo_results = test_estimated_prior(
-            keys[i], kernel_type[1], length_scale, noise_variance, kernel_type[2], kernel_type[3], ac_func, n_dim,
-            n_dataset_funcs, n_discrete_points, n_test_funcs, budget, n_bo_runs, visualize_bo, gp_fit_maxiter
+            pool, keys[i], kernel_type[1], length_scale, noise_variance, kernel_type[2], kernel_type[3], ac_func, n_dim,
+            n_dataset_funcs, n_discrete_points, n_test_funcs, budget, n_bo_runs, visualize_bo, gp_fit_maxiter, different_domain
         )
         regrets_mean_groundtruth, regrets_std_groundtruth = results_groundtruth
         regrets_mean_inferred, regrets_std_inferred = results_inferred
@@ -423,3 +456,37 @@ if __name__ == '__main__':
     plot.plot_estimated_prior(results)
 
     print('All done.')
+
+
+if __name__ == '__main__':
+
+    n_workers = 96
+    n_dim = 2
+    n_discrete_points = 100
+    n_test_funcs = 96
+    budget = 50
+    n_bo_runs = 1
+    visualize_bo = False
+    noise_variance = 1e-6
+    length_scale = 0.05
+    gp_fit_maxiter = 100
+    # different_domain = 0.5
+
+    for different_domain in [0.1, 0.3]:
+        for ac_func_type in ['ucb', 'ei']:
+            for n_dataset_funcs in [1, 3, 10]:
+                run(n_workers, n_dim, n_dataset_funcs, n_discrete_points, n_test_funcs, n_bo_runs, budget, visualize_bo, ac_func_type, noise_variance, length_scale, gp_fit_maxiter, different_domain)
+
+    '''
+    n_dim = 1
+    n_test_funcs = 1
+    n_bo_runs = 1
+    visualize_bo = True
+    ac_func_type = 'ucb'
+    for gp_fit_maxiter in [5, 100]:
+        for n_dataset_funcs in [1, 3, 10]:
+            run(n_workers, n_dim, n_dataset_funcs, n_discrete_points, n_test_funcs, n_bo_runs, budget, visualize_bo, ac_func_type, noise_variance, length_scale, gp_fit_maxiter)
+    '''
+
+    print('really done now.')
+
