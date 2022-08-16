@@ -126,8 +126,8 @@ def infer_parameters(mean_func,
 
       # sample gp params first
       higher_params = utils.softplus_warp(higher_params)
-      gamma_beta, gamma_delta = higher_params[0], higher_params[1]
-      gamma = Gamma(gamma_beta, gamma_delta)
+      gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
+      gamma = Gamma(gamma_alpha, gamma_beta)
       key, _ = jax.random.split(key, 2)
       thetas = gamma.sample(num_theta_samples, seed=key)
       # shape, scale = higher_params[0], higher_params[1]
@@ -226,8 +226,8 @@ def sample_from_gp(key,
   """
   # sample gp params first
   higher_params = params.model['higher_params']
-  gamma_beta, gamma_delta = higher_params[0], higher_params[1]
-  gamma = Gamma(gamma_beta, gamma_delta)
+  gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
+  gamma = Gamma(gamma_alpha, gamma_beta)
   key, _ = jax.random.split(key, 2)
   thetas = gamma.sample(n_dataset_thetas, seed=key)
   # sample functions for each theta and concatenate
