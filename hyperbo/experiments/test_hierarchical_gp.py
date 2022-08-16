@@ -166,8 +166,8 @@ if __name__ == '__main__':
             # sample gp params first
             global key
             higher_params = gpparams.model['higher_params']
-            gamma_beta, gamma_delta = higher_params[0], higher_params[1]
-            gamma = Gamma(gamma_beta, gamma_delta)
+            gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
+            gamma = Gamma(gamma_alpha, gamma_beta)
             key, _ = jax.random.split(key, 2)
             thetas = gamma.sample(num_theta_samples, seed=key)
             objectives = []
@@ -189,8 +189,8 @@ if __name__ == '__main__':
             # sample gp params first
             global key
             higher_params = gpparams.model['higher_params']
-            gamma_beta, gamma_delta = higher_params[0], higher_params[1]
-            gamma = Gamma(gamma_beta, gamma_delta)
+            gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
+            gamma = Gamma(gamma_alpha, gamma_beta)
             key, _ = jax.random.split(key, 2)
             thetas = gamma.sample(num_theta_samples, seed=key)
             objectives = []
