@@ -136,14 +136,15 @@ def infer_parameters(mean_func,
       # compute objective value for each theta and take average
       for theta in thetas:
           model_params['lengthscale'] = theta
-          objectives.append(objective(
+          # only support nll
+          objectives.append(jnp.exp(-objective(
               mean_func=mean_func,
               cov_func=cov_func,
               params=GPParams(model=model_params, config=init_params.config),
               dataset=dataset,
               warp_func=warp_func
-          ))
-      return jnp.mean(jnp.array(objectives))
+          )))
+      return -jnp.log(jnp.mean(jnp.array(objectives)))
 
     if method == 'bfgs':
       higher_params = jnp.array([2.0, 2.0]) # hard coded for now

@@ -59,11 +59,11 @@ if __name__ == '__main__':
     budget = 50
     noise_variance = 1e-6
     length_scale = 0.05
-    gp_fit_maxiter = 10
+    gp_fit_maxiter = 3
     different_domain = 1.0
-    num_theta_samples = 100
-    n_dataset_thetas = 100
-    n_dataset_funcs = 3
+    num_theta_samples = 20
+    n_dataset_thetas = 20
+    n_dataset_funcs = 5
 
     key = jax.random.PRNGKey(0)
 
@@ -162,28 +162,6 @@ if __name__ == '__main__':
 
         model.initialize_params(init_key)
 
-        def reg(gpparams, gpwarp_func=None):
-            # sample gp params first
-            global key
-            higher_params = gpparams.model['higher_params']
-            gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
-            gamma = Gamma(gamma_alpha, gamma_beta)
-            key, _ = jax.random.split(key, 2)
-            thetas = gamma.sample(num_theta_samples, seed=key)
-            objectives = []
-            # compute objective value for each theta and take average
-            for theta in thetas:
-                gpparams.model['lengthscale'] = theta
-                objectives.append(obj.sample_mean_cov_regularizer(
-                    mean_func=model.mean_func,
-                    cov_func=model.cov_func,
-                    params=gpparams,
-                    dataset=model.dataset,
-                    warp_func=gpwarp_func,
-                    distance=utils.kl_multivariate_normal
-                ))
-            return jnp.mean(jnp.array(objectives))
-
 
         def nll_func(gpparams, gpwarp_func=None):
             # sample gp params first
@@ -197,19 +175,18 @@ if __name__ == '__main__':
             # compute objective value for each theta and take average
             for theta in thetas:
                 gpparams.model['lengthscale'] = theta
-                objectives.append(obj.neg_log_marginal_likelihood(
+                # only support nll
+                objectives.append(jnp.exp(-obj.neg_log_marginal_likelihood(
                     mean_func=model.mean_func,
                     cov_func=model.cov_func,
                     params=gpparams,
                     dataset=model.dataset,
                     warp_func=gpwarp_func
-                ))
-            return jnp.mean(jnp.array(objectives))
+                )))
+            return -jnp.log(jnp.mean(jnp.array(objectives)))
 
 
-        ground_truth_reg = reg(params)
         ground_truth_nll = nll_func(params)
-        init_reg = reg(init_params, warp_func)
         init_nll = nll_func(init_params, warp_func)
 
         inferred_params = model.train()
@@ -220,11 +197,9 @@ if __name__ == '__main__':
         print('retrieved_inferred_params = {}'.format(retrieved_inferred_params))
         # print('inferred higher params:', inferred_params.model['higher_params'])
 
-        inferred_reg = reg(inferred_params, warp_func)
         inferred_nll = nll_func(inferred_params, warp_func)
 
         print('init_nll = {}, inferred_nll = {}, ground_truth_nll = {}'.format(init_nll, inferred_nll, ground_truth_nll))
-        print('init_reg = {}, inferred_reg = {}, ground_truth_reg = {}'.format(init_reg, inferred_reg, ground_truth_reg))
 
         assert (init_nll > inferred_nll)
 
