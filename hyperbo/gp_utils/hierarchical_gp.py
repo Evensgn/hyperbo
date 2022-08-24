@@ -45,6 +45,8 @@ import jax.scipy as jsp
 import optax
 import numpy as np
 from tensorflow_probability.substrates.jax.distributions import Gamma
+import copy
+
 
 grad = jax.grad
 jit = jax.jit
@@ -65,7 +67,8 @@ def infer_parameters(mean_func,
                      objective=obj.neg_log_marginal_likelihood,
                      key=None,
                      params_save_file=None,
-                     num_theta_samples=100):
+                     num_theta_samples=100,
+                     n_workers=1):
   """Posterior inference for a meta GP.
 
   Args:
@@ -103,11 +106,14 @@ def infer_parameters(mean_func,
   batch_size = params.config['batch_size']
   # TODO(wangzi): clean this up.
   if method == 'lbfgs':
+    pass
+    '''
     # To handle very large sub datasets.
     key, subkey = jax.random.split(key, 2)
     dataset_iter = data_utils.sub_sample_dataset_iterator(
         subkey, dataset, batch_size)
     dataset = next(dataset_iter)
+    '''
 
   maxiter = init_params.config['maxiter']
   logging_interval = init_params.config['logging_interval']
@@ -119,35 +125,47 @@ def infer_parameters(mean_func,
   if method == 'adam':
     raise ValueError('adam not supported')
   else:
-    @jit
+    # @jit
     def loss_func(higher_params):
       nonlocal key
+      nonlocal dataset
       model_params = params.model
 
       # sample gp params first
       higher_params = utils.softplus_warp(higher_params)
-      gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
+      # gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
+      gamma_alpha, gamma_beta = 0.5, higher_params[0]
       gamma = Gamma(gamma_alpha, gamma_beta)
       key, _ = jax.random.split(key, 2)
       thetas = gamma.sample(num_theta_samples, seed=key)
-      # shape, scale = higher_params[0], higher_params[1]
-      # thetas = np.random.gamma(shape, scale, size=num_theta_samples)
-      objectives = []
-      # compute objective value for each theta and take average
-      for theta in thetas:
+
+      def loss_dataset_theta(dataset, theta):
           model_params['lengthscale'] = theta
-          # only support nll
-          objectives.append(jnp.exp(-objective(
-              mean_func=mean_func,
-              cov_func=cov_func,
-              params=GPParams(model=model_params, config=init_params.config),
-              dataset=dataset,
-              warp_func=warp_func
-          )))
-      return -jnp.log(jnp.mean(jnp.array(objectives)))
+          return objective(
+              mean_func,
+              cov_func,
+              copy.deepcopy(GPParams(model=model_params, config=init_params.config)),
+              dataset,
+              warp_func,
+              True
+          )
+
+      loss = 0.0
+      for dataset_i in dataset:
+          loss_theta = lambda theta: loss_dataset_theta(dataset_i, theta)
+          B = (num_theta_samples - 1) // n_workers + 1
+          objectives = []
+          for b in range(B):
+              objectives.append(jax.pmap(loss_theta)(thetas[b * n_workers:min((b + 1) * n_workers, num_theta_samples)]))
+          objectives = jnp.concatenate(objectives, axis=None)
+          loss_i = -jax.scipy.special.logsumexp(-objectives, axis=0) - jnp.log(num_theta_samples)
+          # print('loss_i:', loss_i)
+          loss += loss_i
+
+      return loss
 
     if method == 'bfgs':
-      higher_params = jnp.array([2.0, 2.0]) # hard coded for now
+      higher_params = jnp.array([2.0]) # hard coded for now
       higher_params, _ = bfgs.bfgs(
           loss_func,
           higher_params,
@@ -170,7 +188,7 @@ def infer_parameters(mean_func,
         alpha = 1.0
       else:
         alpha = params.config['alpha']
-      higher_params = jnp.array([2.0, 2.0]) # hard coded for now
+      higher_params = jnp.array([2.0]) # hard coded for now
       current_loss, higher_params, _ = lbfgs.lbfgs(
           loss_func,
           higher_params,
@@ -178,6 +196,7 @@ def infer_parameters(mean_func,
           alpha=alpha,
           callback=None)
       params.model['higher_params'] = utils.softplus_warp(higher_params)
+
       '''
       params_utils.log_params_loss(
           step=maxiter,
@@ -227,7 +246,8 @@ def sample_from_gp(key,
   """
   # sample gp params first
   higher_params = params.model['higher_params']
-  gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
+  # gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
+  gamma_alpha, gamma_beta = 0.5, higher_params[0]
   gamma = Gamma(gamma_alpha, gamma_beta)
   key, _ = jax.random.split(key, 2)
   thetas = gamma.sample(n_dataset_thetas, seed=key)
@@ -247,8 +267,7 @@ def sample_from_gp(key,
       shape=(n_dataset_funcs,),
       method=method)).T
     datasets.append(theta_dataset)
-  dataset = jnp.concatenate(datasets, axis=1)
-  return dataset
+  return datasets
 
 
 # predict does not work yet
@@ -338,16 +357,17 @@ class HierarchicalGP:
     input_dim: dimension of input variables.
     rng: Jax random state.
   """
-  dataset: Dict[Union[int, str], SubDataset]
+  dataset: List[Dict[Union[int, str], SubDataset]]
 
   def __init__(self,
-               dataset: Union[List[Union[Tuple[jnp.ndarray, ...], SubDataset]],
+               dataset: List[Union[List[Union[Tuple[jnp.ndarray, ...], SubDataset]],
                               Dict[Union[str], Union[Tuple[jnp.ndarray, ...],
-                                                     SubDataset]]],
+                                                     SubDataset]]]],
                mean_func: Callable[..., jnp.array],
                cov_func: Callable[..., jnp.array],
                params: GPParams,
-               warp_func: Optional[Dict[str, Callable[[Any], Any]]] = None):
+               warp_func: Optional[Dict[str, Callable[[Any], Any]]] = None,
+               pool=None):
     self.mean_func = mean_func
     self.cov_func = cov_func
     if params is not None:
@@ -359,6 +379,7 @@ class HierarchicalGP:
     if 'objective' not in self.params.config:
       self.params.config['objective'] = obj.neg_log_marginal_likelihood
     self.rng = None
+    self.pool = pool
 
   def initialize_params(self, key):
     """Initialize params with a JAX random state."""
@@ -419,28 +440,30 @@ class HierarchicalGP:
                    f'{dot_prod_sigma.shape} and dot_prod_bias: {dot_prod_bias}')
     self.rng = key
 
-  def set_dataset(self, dataset: Union[List[Union[Tuple[jnp.ndarray, ...],
+  def set_dataset(self, dataset: List[Union[List[Union[Tuple[jnp.ndarray, ...],
                                                   SubDataset]],
                                        Dict[Union[int, str],
                                             Union[Tuple[jnp.ndarray, ...],
-                                                  SubDataset]]]):
+                                                  SubDataset]]]]):
     """Reset GP dataset to be dataset.
 
     Args:
       dataset: a list of vx, vy pairs, i.e. [(vx, vy)_i], where vx is n x d and
         vy is n x 1.
     """
-    self.dataset = {}
-    self.params.cache = {}
-    if isinstance(dataset, list):
-      dataset = {i: dataset[i] for i in range(len(dataset))}
-    for key, val in dataset.items():
-      self.dataset[key] = SubDataset(*val)
+    self.dataset = []
+    for i, dataset_i in enumerate(dataset):
+        new_dataset_i = {}
+        if isinstance(dataset_i, list):
+          dataset_i = {j: dataset_i[j] for j in range(len(dataset_i))}
+        for key, val in dataset_i.items():
+          new_dataset_i[key] = SubDataset(*val)
+        self.dataset.append(new_dataset_i)
 
   @property
   def input_dim(self) -> int:
-    key = list(self.dataset.keys())[0]
-    return self.dataset[key].x.shape[1]
+    key = list(self.dataset[0].keys())[0]
+    return self.dataset[0][key].x.shape[1]
 
   def update_sub_dataset(self,
                          sub_dataset: Union[Tuple[jnp.ndarray, ...],
@@ -470,7 +493,7 @@ class HierarchicalGP:
     if sub_dataset_key in self.params.cache:
       self.params.cache[sub_dataset_key].needs_update = True
 
-  def train(self, key=None, params_save_file=None) -> GPParams:
+  def train(self, key=None, params_save_file=None, n_workers=1) -> GPParams:
     """Train the GP by fitting it to the dataset.
 
     Args:
@@ -497,7 +520,9 @@ class HierarchicalGP:
         objective=self.params.config['objective'],
         key=subkey,
         params_save_file=params_save_file,
-        num_theta_samples=self.params.config['num_theta_samples'])
+        num_theta_samples=self.params.config['num_theta_samples'],
+        n_workers=n_workers
+    )
     logging.info(msg=f'params = {self.params}')
     return self.params
 

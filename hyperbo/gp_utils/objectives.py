@@ -155,6 +155,12 @@ def neg_log_marginal_likelihood(mean_func,
   return total_nll
 
 
+def neg_log_marginal_likelihood_tuple(args):
+    return neg_log_marginal_likelihood(*args)
+
+
+nll_tuple = neg_log_marginal_likelihood_tuple
+
 nll = neg_log_marginal_likelihood
 regkl = sample_mean_cov_regularizer
 regeuc = sample_mean_cov_regularizer_euc

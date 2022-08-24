@@ -23,6 +23,8 @@ import plot
 import datetime
 import argparse
 from tensorflow_probability.substrates.jax.distributions import Gamma
+import copy
+import os
 
 
 DEFAULT_WARP_FUNC = None
@@ -53,17 +55,23 @@ kernel_list = [
 
 
 if __name__ == '__main__':
-    n_dim = 1
+    n_workers = 96
+    n_dim = 2
     n_discrete_points = 10
     n_test_funcs = 96
     budget = 50
     noise_variance = 1e-6
     length_scale = 0.05
-    gp_fit_maxiter = 3
+    gp_fit_maxiter = 30
     different_domain = 1.0
-    num_theta_samples = 20
-    n_dataset_thetas = 20
-    n_dataset_funcs = 5
+    num_theta_samples = 10
+    n_dataset_thetas = 10
+    n_dataset_funcs = 10
+    n_trials = 20
+
+    os.environ['XLA_FLAGS'] = '--xla_force_host_platform_device_count={}'.format(n_workers)
+
+    pool = ProcessingPool(nodes=n_workers)
 
     key = jax.random.PRNGKey(0)
 
@@ -85,7 +93,7 @@ if __name__ == '__main__':
                 'lengthscale': 1.0, # this is just a placeholder, does not actually matter
                 'signal_variance': 1.0,
                 'noise_variance': noise_variance,
-                'higher_params': [0.5, 1.0]
+                'higher_params': [1.0]
             })
 
         if cov_func in [
@@ -106,12 +114,17 @@ if __name__ == '__main__':
         logging.info(msg=f'params = {params}')
 
         key, init_key = jax.random.split(key)
-        dataset = [(
-                   vx_dataset, hierarchical_gp.sample_from_gp(key, mean_func, cov_func, params, vx_dataset, n_dataset_thetas=n_dataset_thetas, n_dataset_funcs=n_dataset_funcs),
-                   'all_data')]
-        vy = dataset[0][1]
-        for i in range(vy.shape[1]):
-            dataset.append((vx_dataset, vy[:, i:i + 1]))
+        data_list = hierarchical_gp.sample_from_gp(
+            key, mean_func, cov_func, params, vx_dataset,
+            n_dataset_thetas=n_dataset_thetas, n_dataset_funcs=n_dataset_funcs
+        )
+        dataset = []
+        for data in data_list:
+            dataset_i = [(vx_dataset, data, 'all_data')]
+            vy = dataset_i[0][1]
+            for j in range(vy.shape[1]):
+                dataset_i.append((vx_dataset, vy[:, j:j + 1]))
+            dataset.append(dataset_i)
 
         # minimize nll
         init_params = GPParams(
@@ -120,7 +133,7 @@ if __name__ == '__main__':
                 'lengthscale': 0.1, # this is just a placeholder, does not actually matter
                 'signal_variance': 1.0,
                 'noise_variance': noise_variance,
-                'higher_params': utils.softplus_warp(jnp.array([2.0, 2.0])) # initial values before warp function
+                'higher_params': utils.softplus_warp(jnp.array([2.0])) # initial values before warp function
             },
             config={
                 'method':
@@ -158,7 +171,9 @@ if __name__ == '__main__':
             mean_func=mean_func,
             cov_func=cov_func,
             params=init_params,
-            warp_func=warp_func)
+            warp_func=warp_func,
+            pool=pool
+        )
 
         model.initialize_params(init_key)
 
@@ -167,29 +182,59 @@ if __name__ == '__main__':
             # sample gp params first
             global key
             higher_params = gpparams.model['higher_params']
-            gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
+            # gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
+            gamma_alpha, gamma_beta = 0.5, higher_params[0]
             gamma = Gamma(gamma_alpha, gamma_beta)
             key, _ = jax.random.split(key, 2)
             thetas = gamma.sample(num_theta_samples, seed=key)
-            objectives = []
-            # compute objective value for each theta and take average
-            for theta in thetas:
+
+            print('gamma_alpha:', gamma_alpha)
+            print('gamma_beta:', gamma_beta)
+            print('thetas:', thetas)
+
+            def loss_dataset_theta(gpparams, model, dataset, theta):
                 gpparams.model['lengthscale'] = theta
-                # only support nll
-                objectives.append(jnp.exp(-obj.neg_log_marginal_likelihood(
-                    mean_func=model.mean_func,
-                    cov_func=model.cov_func,
-                    params=gpparams,
-                    dataset=model.dataset,
-                    warp_func=gpwarp_func
-                )))
-            return -jnp.log(jnp.mean(jnp.array(objectives)))
+                return obj.nll(
+                    model.mean_func,
+                    model.cov_func,
+                    copy.deepcopy(gpparams),
+                    dataset,
+                    model.warp_func,
+                    True
+                )
+
+            loss = 0.0
+            for dataset_i in model.dataset:
+                loss_theta = lambda theta: loss_dataset_theta(gpparams, model, dataset_i, theta)
+                B = (num_theta_samples - 1) // n_workers + 1
+                objectives = []
+                for b in range(B):
+                    objectives.append(jax.pmap(loss_theta)(thetas[b * n_workers:min((b + 1) * n_workers, num_theta_samples)]))
+                objectives = jnp.concatenate(objectives, axis=None)
+                # print('objectives:', objectives)
+                loss_i = -(jax.scipy.special.logsumexp(-objectives, axis=0) - jnp.log(num_theta_samples))
+                # print('loss_i:', loss_i)
+                loss += loss_i
+            # print('loss:', loss)
+
+            return loss
 
 
         ground_truth_nll = nll_func(params)
         init_nll = nll_func(init_params, warp_func)
 
-        inferred_params = model.train()
+        time_0 = time.time()
+        nll_list = []
+        for i in range(n_trials):
+            nll_list.append(nll_func(init_params, warp_func))
+        nll_list = jnp.array(nll_list)
+        time_1 = time.time()
+        print('time:', (time_1 - time_0) / n_trials)
+        print('nll_list:', nll_list)
+        print('mean, std:', jnp.mean(nll_list), jnp.std(nll_list))
+
+        '''
+        inferred_params = model.train(n_workers=n_workers)
 
         keys = params.model.keys()
         retrieved_inferred_params = dict(
@@ -202,6 +247,7 @@ if __name__ == '__main__':
         print('init_nll = {}, inferred_nll = {}, ground_truth_nll = {}'.format(init_nll, inferred_nll, ground_truth_nll))
 
         assert (init_nll > inferred_nll)
+        '''
 
     print('All done.')
 
