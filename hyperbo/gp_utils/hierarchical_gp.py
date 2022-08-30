@@ -133,8 +133,7 @@ def infer_parameters(mean_func,
 
       # sample gp params first
       higher_params = utils.softplus_warp(higher_params)
-      # gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
-      gamma_alpha, gamma_beta = 0.5, higher_params[0]
+      gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
       gamma = Gamma(gamma_alpha, gamma_beta)
       key, _ = jax.random.split(key, 2)
       thetas = gamma.sample(num_theta_samples, seed=key)
@@ -158,14 +157,14 @@ def infer_parameters(mean_func,
           for b in range(B):
               objectives.append(jax.pmap(loss_theta)(thetas[b * n_workers:min((b + 1) * n_workers, num_theta_samples)]))
           objectives = jnp.concatenate(objectives, axis=None)
-          loss_i = -jax.scipy.special.logsumexp(-objectives, axis=0) - jnp.log(num_theta_samples)
+          loss_i = -(jax.scipy.special.logsumexp(-objectives, axis=0) - jnp.log(num_theta_samples))
           # print('loss_i:', loss_i)
           loss += loss_i
 
       return loss
 
     if method == 'bfgs':
-      higher_params = jnp.array([2.0]) # hard coded for now
+      higher_params = jnp.array([2.0, 2.0]) # hard coded for now
       higher_params, _ = bfgs.bfgs(
           loss_func,
           higher_params,
@@ -188,7 +187,7 @@ def infer_parameters(mean_func,
         alpha = 1.0
       else:
         alpha = params.config['alpha']
-      higher_params = jnp.array([2.0]) # hard coded for now
+      higher_params = jnp.array([2.0, 2.0]) # hard coded for now
       current_loss, higher_params, _ = lbfgs.lbfgs(
           loss_func,
           higher_params,
@@ -246,8 +245,7 @@ def sample_from_gp(key,
   """
   # sample gp params first
   higher_params = params.model['higher_params']
-  # gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
-  gamma_alpha, gamma_beta = 0.5, higher_params[0]
+  gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
   gamma = Gamma(gamma_alpha, gamma_beta)
   key, _ = jax.random.split(key, 2)
   thetas = gamma.sample(n_dataset_thetas, seed=key)

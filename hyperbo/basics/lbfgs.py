@@ -28,13 +28,13 @@ import jax
 import jax.numpy as jnp
 
 
-@jax.jit
+# @jax.jit
 def _dict_tensordot(a, b, axes):
   fn = lambda a, b: jnp.tensordot(a, b, axes)
   return jax.tree_map(fn, a, b)
 
 
-@jax.jit
+# @jax.jit
 def _dict_vdot(a, b):
   return jax.tree_util.tree_reduce(jnp.add, jax.tree_map(jnp.vdot, a, b))
 
@@ -139,7 +139,7 @@ def backtracking_linesearch(val_and_grad_fn,
     return cur_val, 0.
 
 
-@jax.jit
+# @jax.jit
 def lbfgs_descent_dir_nocedal(grads, s, y):
   """Compute the descent direction for L-BFGS.
 

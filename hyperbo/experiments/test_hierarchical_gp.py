@@ -57,17 +57,17 @@ kernel_list = [
 if __name__ == '__main__':
     n_workers = 96
     n_dim = 2
-    n_discrete_points = 10
+    n_discrete_points = 100
     n_test_funcs = 96
     budget = 50
     noise_variance = 1e-6
     length_scale = 0.05
-    gp_fit_maxiter = 30
+    gp_fit_maxiter = 300
     different_domain = 1.0
-    num_theta_samples = 10
-    n_dataset_thetas = 10
-    n_dataset_funcs = 10
-    n_trials = 20
+    num_theta_samples = 200
+    n_dataset_thetas = 200
+    n_dataset_funcs = 1
+    n_trials = 10
 
     os.environ['XLA_FLAGS'] = '--xla_force_host_platform_device_count={}'.format(n_workers)
 
@@ -93,7 +93,7 @@ if __name__ == '__main__':
                 'lengthscale': 1.0, # this is just a placeholder, does not actually matter
                 'signal_variance': 1.0,
                 'noise_variance': noise_variance,
-                'higher_params': [1.0]
+                'higher_params': [0.5, 1.0]
             })
 
         if cov_func in [
@@ -133,7 +133,7 @@ if __name__ == '__main__':
                 'lengthscale': 0.1, # this is just a placeholder, does not actually matter
                 'signal_variance': 1.0,
                 'noise_variance': noise_variance,
-                'higher_params': utils.softplus_warp(jnp.array([2.0])) # initial values before warp function
+                'higher_params': utils.softplus_warp(jnp.array([2.0, 2.0])) # initial values before warp function
             },
             config={
                 'method':
@@ -182,8 +182,7 @@ if __name__ == '__main__':
             # sample gp params first
             global key
             higher_params = gpparams.model['higher_params']
-            # gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
-            gamma_alpha, gamma_beta = 0.5, higher_params[0]
+            gamma_alpha, gamma_beta = higher_params[0], higher_params[1]
             gamma = Gamma(gamma_alpha, gamma_beta)
             key, _ = jax.random.split(key, 2)
             thetas = gamma.sample(num_theta_samples, seed=key)
@@ -232,8 +231,8 @@ if __name__ == '__main__':
         print('time:', (time_1 - time_0) / n_trials)
         print('nll_list:', nll_list)
         print('mean, std:', jnp.mean(nll_list), jnp.std(nll_list))
-
         '''
+
         inferred_params = model.train(n_workers=n_workers)
 
         keys = params.model.keys()
