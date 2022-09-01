@@ -81,6 +81,12 @@ DEFAULT_WARP_FUNC = {
     'noise_variance': lambda x: softplus_warp(x) + EPS,
 }
 
+DEFAULT_WARP_FUNC_LC_ONLY = {
+    'constant': identity_warp,
+    'lengthscale': lambda x: softplus_warp(x) + EPS,
+    'signal_variance': identity_warp,
+    'noise_variance': identity_warp,
+}
 
 def kl_multivariate_normal(mu0,
                            cov0,
