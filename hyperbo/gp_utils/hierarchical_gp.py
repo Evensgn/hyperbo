@@ -249,6 +249,7 @@ def sample_from_gp(key,
   gamma = Gamma(gamma_alpha, gamma_beta)
   key, _ = jax.random.split(key, 2)
   thetas = gamma.sample(n_dataset_thetas, seed=key)
+  print("Sampled thetas: ", thetas)
   # sample functions for each theta and concatenate
   datasets = []
   for theta in thetas:
