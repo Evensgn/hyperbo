@@ -41,8 +41,7 @@ PD1 = {
     ('phase1', 'unmatched'): '../pd1/pd1_unmatched_phase1_results.jsonl',
 }
 
-HPOB_ROOT_DIR = 'hpob-data/'
-
+HPOB_ROOT_DIR = './hpob-data/'
 
 
 def get_aligned_dataset(trials,
@@ -489,7 +488,7 @@ def hpob_dataset(search_space_index,
                  output_log_warp=True):
   """Load the original finite hpob dataset by search space and test dataset id.
 
-  To use the HPO-B dataset, download data and import hpob_handler from
+  To use the hpob dataset, download data and import hpob_handler from
     https://github.com/releaunifreiburg/HPO-B.
 
   Args:
@@ -550,8 +549,8 @@ def hpob_dataset(search_space_index,
   return dataset, test_dataset_id, SubDataset(x=test_x, y=test_y)
 
 
-def hpob_dataset_combined(search_space_index,
-                          output_log_warp=False):
+def hpob_dataset_v2(search_space_index,
+                          output_log_warp=True):
     """Load the original finite hpob dataset by search space.
     Args:
       search_space_index: string of a search space. See https://arxiv.org/pdf/2106.06257.pdf Table 3 for reference.
@@ -561,44 +560,28 @@ def hpob_dataset_combined(search_space_index,
     """
 
     # Make sure the hpob folder is also in your directory
-    from hpob import hpob_handler
+    from hyperbo.bo_utils import hpob_handler
 
-    handler = hpob_handler.HPOBHandler(root_dir=HPOB_ROOT_DIR, mode='v3')
+    handler = hpob_handler.HPOBHandler(root_dir=HPOB_ROOT_DIR, mode='v2')
+
     # restrict the input to a string, the sorting method for int is really confusing
     if isinstance(search_space_index, str):
         search_space = search_space_index
     else:
-        raise ValueError('search_space_index must be str or int.')
+        raise ValueError('search_space_index must be str.')
 
-    test_dataset_ids = list(handler.meta_test_data[search_space].keys())
-    val_dataset_ids = list(handler.meta_validation_data[search_space].keys())
+    dataset_ids = list(handler.meta_test_data[search_space].keys())
 
     dataset = {}
-    output_warper = data.get_output_warper(output_log_warp)
+    output_warper = get_output_warper(output_log_warp)
 
-    for dataset_id in handler.meta_train_data[search_space]:
-        train_x = np.array(handler.meta_train_data[search_space][dataset_id]['X'])
-        train_y = np.array(handler.meta_train_data[search_space][dataset_id]['y'])
-        if output_log_warp:
-            train_y = output_warper(train_y)
-        dataset[dataset_id] = SubDataset(x=train_x, y=train_y)
-
-    for dataset_id in test_dataset_ids:
+    for dataset_id in dataset_ids:
         test_x = np.array(handler.meta_test_data[search_space][dataset_id]['X'])
         test_y = np.array(handler.meta_test_data[search_space][dataset_id]['y'])
         if output_log_warp:
             test_y = output_warper(test_y)
         dataset[dataset_id] = SubDataset(x=test_x, y=test_y)
 
-    for dataset_id in val_dataset_ids:
-        val_x = np.array(handler.meta_validation_data[search_space][dataset_id]['X'])
-        val_y = np.array(handler.meta_validation_data[search_space][dataset_id]['y'])
-        if output_log_warp:
-            val_y = output_warper(val_y)
-        dataset[dataset_id] = SubDataset(x=val_x, y=val_y)
-
-    # print(test_dataset_ids)
-    # print(val_dataset_ids)
     return dataset
 
 

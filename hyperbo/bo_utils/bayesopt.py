@@ -29,6 +29,7 @@ import jax.numpy as jnp
 import jaxopt
 import numpy as np
 import tensorflow as tf
+from tensorflow_probability.substrates.jax.distributions import Gamma
 
 SubDataset = defs.SubDataset
 INPUT_SAMPLERS = const.INPUT_SAMPLERS
@@ -115,6 +116,89 @@ def simulated_bayesopt(model: gp.GP, sub_dataset_key: Union[int, str],
         model=model,
         sub_dataset_key=sub_dataset_key,
         x_queries=queried_sub_dataset.x)
+    select_idx = evals.argmax()
+    eval_datapoint = queried_sub_dataset.x[select_idx], queried_sub_dataset.y[
+        select_idx]
+    model.update_sub_dataset(
+        eval_datapoint, sub_dataset_key=sub_dataset_key, is_append=True)
+    if 'retrain' in model.params.config and model.params.config['retrain'] > 0:
+      if model.params.config['objective'] in [obj.regkl, obj.regeuc]:
+        raise ValueError('Objective must include NLL to retrain.')
+      else:
+        maxiter = model.params.config['retrain']
+        logging.info(msg=f'Retraining with maxiter = {maxiter}.')
+        model.params.config['maxiter'] = maxiter
+        model.train()
+
+  return model.dataset.get(sub_dataset_key,
+                           SubDataset(jnp.empty(0), jnp.empty(0)))
+
+
+def simulated_bayesopt_gamma(key,
+                             n_dim,
+                             gamma_params,
+                             cov_func,
+                             mean_func,
+                             dataset,
+                             sub_dataset_key,
+                             queried_sub_dataset,
+                             ac_func,
+                             iters,
+                             n_bo_gamma_samples):
+  model = gp.GP(
+    dataset=dataset,
+    mean_func=mean_func,
+    cov_func=cov_func,
+    params=defs.GPParams(model={}),
+    warp_func=None)
+  for _ in range(iters):
+    evals_list = []
+    constant_a, constant_b = gamma_params['constant']
+    constant_gamma = Gamma(constant_a, constant_b)
+    lengthscale_a, lengthscale_b = gamma_params['lengthscale']
+    lengthscale_gamma = Gamma(lengthscale_a, lengthscale_b)
+    signal_variance_a, signal_variance_b = gamma_params['signal_variance']
+    signal_variance_gamma = Gamma(signal_variance_a, signal_variance_b)
+    noise_variance_a, noise_variance_b = gamma_params['noise_variance']
+    noise_variance_gamma = Gamma(noise_variance_a, noise_variance_b)
+
+    for _ in range(n_bo_gamma_samples):
+        new_key, key = jax.random.split(key)
+        constant = constant_gamma.sample(1, seed=new_key)
+        new_key, key = jax.random.split(key)
+        lengthscale = lengthscale_gamma.sample(n_dim, seed=new_key)
+        new_key, key = jax.random.split(key)
+        signal_variance = signal_variance_gamma.sample(1, seed=new_key)
+        new_key, key = jax.random.split(key)
+        noise_variance = noise_variance_gamma.sample(1, seed=new_key)
+
+        params_sample = defs.GPParams(
+            model={
+                'constant': constant,
+                'lengthscale': lengthscale,
+                'signal_variance': signal_variance,
+                'noise_variance': noise_variance,
+            }
+        )
+        # set params
+        model.params = params_sample
+        evals = ac_func(
+            model=model,
+            sub_dataset_key=sub_dataset_key,
+            x_queries=queried_sub_dataset.x)
+        p_dataset_theta = jnp.exp(-obj.neg_log_marginal_likelihood(
+          mean_func=model.mean_func,
+          cov_func=model.cov_func,
+          params=params_sample,
+          dataset=model.dataset, # there is only one sub_dataset which is the active observation list
+          warp_func=None
+        ))
+
+        # P(dataset | theta)
+        evals *= p_dataset_theta
+        evals_list.append(evals)
+
+    evals = jnp.mean(jnp.stack(evals_list), axis=0)
     select_idx = evals.argmax()
     eval_datapoint = queried_sub_dataset.x[select_idx], queried_sub_dataset.y[
         select_idx]
@@ -229,6 +313,33 @@ def run_synthetic(dataset,
         input_sampler=INPUT_SAMPLERS[data_loader_name])
     return (sub_dataset.x,
             sub_dataset.y), None, model.params.__dict__
+
+
+def run_bo_gamma(key,
+                 n_dim,
+                 dataset,
+                 sub_dataset_key,
+                 queried_sub_dataset,
+                 mean_func,
+                 cov_func,
+                 gamma_params,
+                 ac_func,
+                 iters,
+                 n_bo_gamma_samples):
+    sub_dataset = simulated_bayesopt_gamma(
+        key=key,
+        n_dim=n_dim,
+        gamma_params=gamma_params,
+        cov_func=cov_func,
+        mean_func=mean_func,
+        dataset=dataset,
+        sub_dataset_key=sub_dataset_key,
+        queried_sub_dataset=queried_sub_dataset,
+        ac_func=ac_func,
+        iters=iters,
+        n_bo_gamma_samples=n_bo_gamma_samples
+    )
+    return (sub_dataset.x, sub_dataset.y)
 
 
 def _onehot_matrix(shape, idx) -> np.ndarray:
