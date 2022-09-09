@@ -62,12 +62,12 @@ if __name__ == '__main__':
     budget = 50
     noise_variance = 1e-6
     length_scale = 0.05
-    gp_fit_maxiter = 300
+    gp_fit_maxiter = 100
     different_domain = 1.0
-    num_theta_samples = 200
-    n_dataset_thetas = 200
+    num_theta_samples = 300
+    n_dataset_thetas = 300
     n_dataset_funcs = 1
-    n_trials = 10
+    n_trials = 5
 
     os.environ['XLA_FLAGS'] = '--xla_force_host_platform_device_count={}'.format(n_workers)
 
@@ -218,9 +218,9 @@ if __name__ == '__main__':
 
             return loss
 
-
         ground_truth_nll = nll_func(params)
         init_nll = nll_func(init_params, warp_func)
+
 
         time_0 = time.time()
         nll_list = []
