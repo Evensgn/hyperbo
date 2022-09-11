@@ -29,6 +29,8 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from tensorflow.io import gfile
+from tensorflow_probability.substrates.jax.distributions import Gamma
+
 
 partial = functools.partial
 
@@ -641,3 +643,76 @@ def random(key,
   dataset[n_func_historical] = SubDataset(x=x_observed, y=y_observed)
   queried_sub_dataset = SubDataset(x=x_queries, y=y_queries)
   return dataset, n_func_historical, queried_sub_dataset
+
+
+# isotropic assumption
+def generate_param_from_prior(num_samples, prior_params, prior_type='gamma'):
+    key = jax.random.PRNGKey(0)
+    if prior_type == 'gamma':
+        gamma_alpha, gamma_beta = prior_params[0], prior_params[1]
+        gamma = Gamma(gamma_alpha, gamma_beta)
+        key, _ = jax.random.split(key, 2)
+        thetas = gamma.sample(num_samples, seed=key)
+    return thetas
+
+
+def generate_synthetic_data(n_search_space, n_constants, n_ls, n_sig_vars, n_noise_vars, n_funcs, n_func_dims, kernel,
+                            n_discrete_points=100):
+    key = jax.random.PRNGKey(0)
+    kernel_name, cov_func, objective, opt_method = kernel
+    key, _ = jax.random.split(key)
+
+    # discrete domain of test functions
+    all_dataset = {}
+
+    for j in range(n_search_space):
+        vx = jax.random.uniform(key, (n_discrete_points, n_func_dims[j]))
+        vx_dataset = vx
+
+        constant = n_constants[j]
+        lengthscale = n_ls[j]
+        sig_var = n_sig_vars[j]
+        noise_var = n_noise_vars[j]
+
+        params_j = GPParams(
+            model={
+                'constant': constant,
+                'lengthscale': lengthscale,
+                'signal_variance': sig_var,
+                'noise_variance': noise_var
+            })
+
+        mean_func = mean.constant
+        key, init_key = jax.random.split(key)
+        dataset = [(vx, gp.sample_from_gp(key, mean_func, cov_func, params_j, vx, num_samples=n_funcs[j]), 'all_data')]
+
+        vy = dataset[0][1]
+        for i in range(vy.shape[1]):
+            dataset.append((vx_dataset, vy[:, i:i + 1]))
+
+        all_dataset[j] = dataset
+
+    return all_dataset
+
+
+# n_funcs: function # per search space
+def hpob_gen_synthetic(n_search_space, n_funcs, n_func_dims, const_params, ls_params, sig_var_params, noise_var_params,
+                       const_prior='gamma', ls_prior='gamma', sig_var_prior='gamma', noise_var_prior='gamma'):
+    n_constants = generate_param_from_prior(n_search_space, const_params, const_prior)
+    n_ls = generate_param_from_prior(n_search_space, ls_params, ls_prior)
+    n_sig_vars = generate_param_from_prior(n_search_space, sig_var_params, sig_var_prior)
+    n_noise_vars = generate_param_from_prior(n_search_space, noise_var_params, noise_var_prior)
+
+    print("constants: ", n_constants)
+    print("lengthscales: ", n_ls)
+    print("signal variance: ", n_sig_vars)
+    print("noise variance: ", n_noise_vars)
+
+    synthetic_data = generate_synthetic_data(n_search_space, n_constants, n_ls, n_sig_vars, n_noise_vars, n_funcs,
+                                             n_func_dims, kernel=kernel_list[0], n_discrete_points=100)
+    return synthetic_data
+
+'''
+example = hpob_gen_synthetic(n_search_space = 6, n_funcs = [3, 3, 3, 3, 3, 3], n_func_dims = [2, 2, 2, 2, 2, 2], 
+                         const_params = [8, 2], ls_params = [1, 2], sig_var_params = [0.5, 1], noise_var_params = [1, 1000])
+'''
