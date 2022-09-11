@@ -218,7 +218,7 @@ def fit_gp_params(key, dataset, cov_func, objective, opt_method, gp_fit_maxiter)
 
 def run(key, train_id_list, test_id_list, n_workers, kernel_name, cov_func, objective, opt_method, budget, n_bo_runs,
         n_bo_gamma_samples, ac_func_type, gp_fit_maxiter):
-    experiment_name = 'test_hpob_{}'.format(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    experiment_name = 'test_hyperbo_plus_{}'.format(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
 
     if ac_func_type == 'ucb':
         ac_func = acfun.ucb
@@ -277,6 +277,10 @@ def run(key, train_id_list, test_id_list, n_workers, kernel_name, cov_func, obje
 
     # run BO
     results['bo_results'] = {}
+    baseline_regrets_mean_list = []
+    baseline_regrets_std_list = []
+    gamma_regrets_mean_list = []
+    gamma_regrets_std_list = []
     for test_id in test_id_list:
         print('test_id = {}'.format(test_id))
         dataset = data.hpob_dataset_v2(test_id)
@@ -294,6 +298,25 @@ def run(key, train_id_list, test_id_list, n_workers, kernel_name, cov_func, obje
         print('baseline_regrets_std = {}'.format(baseline_regrets_std))
         print('gamma_regrets_mean = {}'.format(gamma_regrets_mean))
         print('gamma_regrets_std = {}'.format(gamma_regrets_std))
+        baseline_regrets_mean_list.append(baseline_regrets_mean)
+        baseline_regrets_std_list.append(baseline_regrets_std)
+        gamma_regrets_mean_list.append(gamma_regrets_mean)
+        gamma_regrets_std_list.append(gamma_regrets_std)
+
+    baseline_regrets_mean_list = jnp.array(baseline_regrets_mean_list)
+    baseline_regrets_std_list = jnp.array(baseline_regrets_std_list)
+    gamma_regrets_mean_list = jnp.array(gamma_regrets_mean_list)
+    gamma_regrets_std_list = jnp.array(gamma_regrets_std_list)
+    baseline_regrets_mean_total = jnp.mean(baseline_regrets_mean_list, axis=0)
+    baseline_regrets_std_total = jnp.mean(baseline_regrets_std_list, axis=0)
+    gamma_regrets_mean_total = jnp.mean(gamma_regrets_mean_list, axis=0)
+    gamma_regrets_std_total = jnp.mean(gamma_regrets_std_list, axis=0)
+    results['bo_results_total'] = {
+        'baseline_regrets_mean': baseline_regrets_mean_total,
+        'baseline_regrets_std': baseline_regrets_std_total,
+        'gamma_regrets_mean': gamma_regrets_mean_total,
+        'gamma_regrets_std': gamma_regrets_std_total
+    }
 
     # save results
     dir_path = os.path.join('results', experiment_name)
@@ -322,6 +345,23 @@ def run(key, train_id_list, test_id_list, n_workers, kernel_name, cov_func, obje
             f.write('nll_logs = {}\n'.format(results['fit_gp_params'][train_id]['nll_logs']))
             f.write('\n')
         f.write('gp_gamma_params = {}\n'.format(gp_gamma_params))
+        f.write('\n')
+
+        for test_id in test_id_list:
+            f.write('test_id = {}\n'.format(test_id))
+            f.write('baseline_regrets_mean = {}\n'.format(results['bo_results'][test_id]['baseline_regrets_mean']))
+            f.write('baseline_regrets_std = {}\n'.format(results['bo_results'][test_id]['baseline_regrets_std']))
+            f.write('gamma_regrets_mean = {}\n'.format(results['bo_results'][test_id]['gamma_regrets_mean']))
+            f.write('gamma_regrets_std = {}\n'.format(results['bo_results'][test_id]['gamma_regrets_std']))
+            f.write('\n')
+
+        f.write('baseline_regrets_mean_total = {}\n'.format(baseline_regrets_mean_total))
+        f.write('baseline_regrets_std_total = {}\n'.format(baseline_regrets_std_total))
+        f.write('gamma_regrets_mean_total = {}\n'.format(gamma_regrets_mean_total))
+        f.write('gamma_regrets_std_total = {}\n'.format(gamma_regrets_std_total))
+
+    # generate plots
+    plot.plot_hyperbo_plus(results)
 
     print('done.')
 
@@ -354,14 +394,14 @@ kernel_list = [
 
 if __name__ == '__main__':
     # train_id_list = ['4796', '5527', '5636', '5859', '5860']
-    train_id_list = ['4796', '5860', '5906']
-    test_id_list = ['5889']
+    train_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767']
+    test_id_list = ['6794', '7607', '7609', '5889']
 
     n_workers = 96
     budget = 30
     n_bo_runs = 1
-    gp_fit_maxiter = 100
-    n_bo_gamma_samples = 100
+    gp_fit_maxiter = 10
+    n_bo_gamma_samples = 10
 
     key = jax.random.PRNGKey(0)
 

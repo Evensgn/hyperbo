@@ -111,7 +111,24 @@ def plot_estimated_prior(results):
                 plt.close(fig)
 
 
+def plot_hyperbo_plus(results):
+    experiment_name = results['experiment_name']
+    dir_path = os.path.join('results', experiment_name)
+    time_list = range(1, results['budget'] + 1)
+    fig, ax = plt.subplots(nrows=1, ncols=1)
+    ax.set_xlabel('BO iteration')
+    ax.set_ylabel('average best sample simple regret')
+    plot_performance_curve(ax, 'baseline', results['bo_results_total']['baseline_regrets_mean'],
+                           results['bo_results_total']['baseline_regrets_std'], time_list)
+    plot_performance_curve(ax, 'hyperbo+', results['bo_results_total']['gamma_regrets_mean'],
+                           results['bo_results_total']['gamma_regrets_std'], time_list)
+    ax.legend()
+    fig.savefig(os.path.join(dir_path, 'regret_vs_iteration.pdf'))
+    plt.close(fig)
+
+
 if __name__ == '__main__':
-    results = np.load('results/test_estimated_prior_2022-08-03_16-57-36/results.npy', allow_pickle=True).item()
-    plot_estimated_prior(results)
+    results = np.load('results/test_hyperbo_plus_2022-09-11_08-39-05/results.npy', allow_pickle=True).item()
+    # plot_estimated_prior(results)
+    plot_hyperbo_plus(results)
 
