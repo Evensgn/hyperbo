@@ -111,7 +111,10 @@ def simulated_bayesopt(model: gp.GP, sub_dataset_key: Union[int, str],
     All observations after bayesopt in the form of an (x_observed, y_observed)
     tuple. These observations include those made before bayesopt.
   """
+  i = 0
   for _ in range(iters):
+    i += 1
+    # print('baseline bo iter', i)
     evals = ac_func(
         model=model,
         sub_dataset_key=sub_dataset_key,
@@ -121,6 +124,7 @@ def simulated_bayesopt(model: gp.GP, sub_dataset_key: Union[int, str],
         select_idx]
     model.update_sub_dataset(
         eval_datapoint, sub_dataset_key=sub_dataset_key, is_append=True)
+    '''
     if 'retrain' in model.params.config and model.params.config['retrain'] > 0:
       if model.params.config['objective'] in [obj.regkl, obj.regeuc]:
         raise ValueError('Objective must include NLL to retrain.')
@@ -129,14 +133,15 @@ def simulated_bayesopt(model: gp.GP, sub_dataset_key: Union[int, str],
         logging.info(msg=f'Retraining with maxiter = {maxiter}.')
         model.params.config['maxiter'] = maxiter
         model.train()
+    '''
 
   return model.dataset.get(sub_dataset_key,
                            SubDataset(jnp.empty(0), jnp.empty(0)))
 
 
-def simulated_bayesopt_gamma(key,
+def simulated_bayesopt_with_gp_params_samples(key,
                              n_dim,
-                             gamma_params,
+                             gp_params_samples,
                              cov_func,
                              mean_func,
                              dataset,
@@ -144,40 +149,30 @@ def simulated_bayesopt_gamma(key,
                              queried_sub_dataset,
                              ac_func,
                              iters,
-                             n_bo_gamma_samples):
+                             n_bo_gp_params_samples):
+  # print('simulated_bayesopt_gamma start')
   model = gp.GP(
     dataset=dataset,
     mean_func=mean_func,
     cov_func=cov_func,
     params=defs.GPParams(model={}),
     warp_func=None)
-  for _ in range(iters):
+
+  constants, lengthscales, signal_variances, noise_variances = gp_params_samples
+
+  # print('iters start')
+
+  for i in range(iters):
+    # print(f'iter {i}')
     evals_list = []
-    constant_a, constant_b = gamma_params['constant']
-    constant_gamma = Gamma(constant_a, constant_b)
-    lengthscale_a, lengthscale_b = gamma_params['lengthscale']
-    lengthscale_gamma = Gamma(lengthscale_a, lengthscale_b)
-    signal_variance_a, signal_variance_b = gamma_params['signal_variance']
-    signal_variance_gamma = Gamma(signal_variance_a, signal_variance_b)
-    noise_variance_a, noise_variance_b = gamma_params['noise_variance']
-    noise_variance_gamma = Gamma(noise_variance_a, noise_variance_b)
 
-    for _ in range(n_bo_gamma_samples):
-        new_key, key = jax.random.split(key)
-        constant = constant_gamma.sample(1, seed=new_key)
-        new_key, key = jax.random.split(key)
-        lengthscale = lengthscale_gamma.sample(n_dim, seed=new_key)
-        new_key, key = jax.random.split(key)
-        signal_variance = signal_variance_gamma.sample(1, seed=new_key)
-        new_key, key = jax.random.split(key)
-        noise_variance = noise_variance_gamma.sample(1, seed=new_key)
-
+    for j in range(n_bo_gp_params_samples):
         params_sample = defs.GPParams(
             model={
-                'constant': constant,
-                'lengthscale': lengthscale,
-                'signal_variance': signal_variance,
-                'noise_variance': noise_variance,
+                'constant': constants[i*n_bo_gp_params_samples+j],
+                'lengthscale': lengthscales[i*n_bo_gp_params_samples*n_dim+j*n_dim:i*n_bo_gp_params_samples*n_dim+(j+1)*n_dim],
+                'signal_variance': signal_variances[i*n_bo_gp_params_samples+j],
+                'noise_variance': noise_variances[i*n_bo_gp_params_samples+j],
             }
         )
         # set params
@@ -198,12 +193,18 @@ def simulated_bayesopt_gamma(key,
         evals *= p_dataset_theta
         evals_list.append(evals)
 
+    # print('evals done')
+
     evals = jnp.mean(jnp.stack(evals_list), axis=0)
     select_idx = evals.argmax()
     eval_datapoint = queried_sub_dataset.x[select_idx], queried_sub_dataset.y[
         select_idx]
     model.update_sub_dataset(
         eval_datapoint, sub_dataset_key=sub_dataset_key, is_append=True)
+
+    # print('update done')
+
+    '''
     if 'retrain' in model.params.config and model.params.config['retrain'] > 0:
       if model.params.config['objective'] in [obj.regkl, obj.regeuc]:
         raise ValueError('Objective must include NLL to retrain.')
@@ -212,7 +213,9 @@ def simulated_bayesopt_gamma(key,
         logging.info(msg=f'Retraining with maxiter = {maxiter}.')
         model.params.config['maxiter'] = maxiter
         model.train()
+    '''
 
+  # print('simulated_bayesopt_gamma end')
   return model.dataset.get(sub_dataset_key,
                            SubDataset(jnp.empty(0), jnp.empty(0)))
 
@@ -262,6 +265,7 @@ def run_synthetic(dataset,
     All observations in (x, y) pairs returned by the bayesopt strategy and all
     the query points in (x, y) pairs. Model params as a dict.
   """
+  # print('run_synthetic start')
   logging.info(msg=f'run_synthetic is using method {method}.')
   if method in const.USE_HGP:
     model_class = gp.HGP
@@ -282,6 +286,8 @@ def run_synthetic(dataset,
       params=init_params,
       warp_func=warp_func)
   key = init_random_key
+
+  # print('init_model')
   if init_model:
     key, subkey = jax.random.split(key)
     model.initialize_params(subkey)
@@ -289,12 +295,14 @@ def run_synthetic(dataset,
     key, subkey = jax.random.split(key)
     model.train(subkey, params_save_file)
   if finite_search_space:
+    # print('simulated_bayesopt start')
     sub_dataset = simulated_bayesopt(
         model=model,
         sub_dataset_key=sub_dataset_key,
         queried_sub_dataset=queried_sub_dataset,
         ac_func=ac_func,
         iters=iters)
+    # print('run_synthetic end')
     return (sub_dataset.x,
             sub_dataset.y), (queried_sub_dataset.x,
                              queried_sub_dataset.y), model.params.__dict__
@@ -315,21 +323,21 @@ def run_synthetic(dataset,
             sub_dataset.y), None, model.params.__dict__
 
 
-def run_bo_gamma(key,
+def run_bo_with_gp_params_samples(key,
                  n_dim,
                  dataset,
                  sub_dataset_key,
                  queried_sub_dataset,
                  mean_func,
                  cov_func,
-                 gamma_params,
+                 gp_params_samples,
                  ac_func,
                  iters,
-                 n_bo_gamma_samples):
-    sub_dataset = simulated_bayesopt_gamma(
+                 n_bo_gp_params_samples):
+    sub_dataset = simulated_bayesopt_with_gp_params_samples(
         key=key,
         n_dim=n_dim,
-        gamma_params=gamma_params,
+        gp_params_samples=gp_params_samples,
         cov_func=cov_func,
         mean_func=mean_func,
         dataset=dataset,
@@ -337,7 +345,7 @@ def run_bo_gamma(key,
         queried_sub_dataset=queried_sub_dataset,
         ac_func=ac_func,
         iters=iters,
-        n_bo_gamma_samples=n_bo_gamma_samples
+        n_bo_gp_params_samples=n_bo_gp_params_samples
     )
     return (sub_dataset.x, sub_dataset.y)
 

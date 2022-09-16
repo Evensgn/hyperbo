@@ -29,7 +29,8 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from tensorflow.io import gfile
-from tensorflow_probability.substrates.jax.distributions import Gamma
+from tensorflow_probability.substrates.jax.distributions import Normal, Gamma
+from hyperbo.gp_utils import mean
 
 
 partial = functools.partial
@@ -551,8 +552,7 @@ def hpob_dataset(search_space_index,
   return dataset, test_dataset_id, SubDataset(x=test_x, y=test_y)
 
 
-def hpob_dataset_v2(search_space_index,
-                          output_log_warp=True):
+def hpob_dataset_v2(search_space_index, output_log_warp=False):
     """Load the original finite hpob dataset by search space.
     Args:
       search_space_index: string of a search space. See https://arxiv.org/pdf/2106.06257.pdf Table 3 for reference.
@@ -566,7 +566,6 @@ def hpob_dataset_v2(search_space_index,
 
     handler = hpob_handler.HPOBHandler(root_dir=HPOB_ROOT_DIR, mode='v2')
 
-    # restrict the input to a string, the sorting method for int is really confusing
     if isinstance(search_space_index, str):
         search_space = search_space_index
     else:
@@ -585,6 +584,61 @@ def hpob_dataset_v2(search_space_index,
         dataset[dataset_id] = SubDataset(x=test_x, y=test_y)
 
     return dataset
+
+
+def hpob_dataset_v3(search_space_index, output_log_warp=False, validation=False):
+    """Load the original finite hpob dataset by search space.
+    Args:
+      search_space_index: string of a search space. See https://arxiv.org/pdf/2106.06257.pdf Table 3 for reference.
+      output_log_warp: log warp on output with max assumed to be 1.
+    Returns:
+      dataset: Dict[str, SubDataset], mapping from study group to a SubDataset.
+    """
+
+    # Make sure the hpob folder is also in your directory
+    from hyperbo.bo_utils import hpob_handler
+
+    handler = hpob_handler.HPOBHandler(root_dir=HPOB_ROOT_DIR, mode='v3')
+
+    if isinstance(search_space_index, str):
+        search_space = search_space_index
+    else:
+        raise ValueError('search_space_index must be str.')
+
+    train_dataset_ids = list(handler.meta_train_data[search_space].keys())
+    validation_dataset_ids = list(handler.meta_validation_data[search_space].keys())
+    test_dataset_ids = list(handler.meta_test_data[search_space].keys())
+
+    train_dataset = {}
+    output_warper = get_output_warper(output_log_warp)
+
+    for dataset_id in train_dataset_ids:
+        x = np.array(handler.meta_train_data[search_space][dataset_id]['X'])
+        y = np.array(handler.meta_train_data[search_space][dataset_id]['y'])
+        if output_log_warp:
+            y = output_warper(y)
+        train_dataset[dataset_id] = SubDataset(x=x, y=y)
+
+    validation_dataset = {}
+    for dataset_id in validation_dataset_ids:
+        x = np.array(handler.meta_validation_data[search_space][dataset_id]['X'])
+        y = np.array(handler.meta_validation_data[search_space][dataset_id]['y'])
+        if output_log_warp:
+            y = output_warper(y)
+        validation_dataset[dataset_id] = SubDataset(x=x, y=y)
+
+    test_dataset = {}
+    for dataset_id in test_dataset_ids:
+        x = np.array(handler.meta_test_data[search_space][dataset_id]['X'])
+        y = np.array(handler.meta_test_data[search_space][dataset_id]['y'])
+        if output_log_warp:
+            y = output_warper(y)
+        test_dataset[dataset_id] = SubDataset(x=x, y=y)
+
+    if validation:
+        return train_dataset, validation_dataset
+    else:
+        return train_dataset, test_dataset
 
 
 def random(key,
@@ -646,73 +700,91 @@ def random(key,
 
 
 # isotropic assumption
-def generate_param_from_prior(num_samples, prior_params, prior_type='gamma'):
-    key = jax.random.PRNGKey(0)
+def generate_param_from_prior(key, num_samples, prior_params, prior_type='gamma'):
     if prior_type == 'gamma':
         gamma_alpha, gamma_beta = prior_params[0], prior_params[1]
         gamma = Gamma(gamma_alpha, gamma_beta)
-        key, _ = jax.random.split(key, 2)
         thetas = gamma.sample(num_samples, seed=key)
+    elif prior_type == 'normal':
+        normal_mu, normal_sigma = prior_params[0], prior_params[1]
+        normal = Normal(normal_mu, normal_sigma)
+        thetas = normal.sample(num_samples, seed=key)
+    else:
+        raise ValueError('prior_type {} not supported.'.format(prior_type))
     return thetas
 
 
-def generate_synthetic_data(n_search_space, n_constants, n_ls, n_sig_vars, n_noise_vars, n_funcs, n_func_dims, kernel,
-                            n_discrete_points=100):
-    key = jax.random.PRNGKey(0)
-    kernel_name, cov_func, objective, opt_method = kernel
-    key, _ = jax.random.split(key)
-
+def generate_synthetic_data(key, n_search_space, cov_func, constants, ls, sig_vars, noise_vars, n_funcs, n_func_dims,
+                            n_discrete_points):
     # discrete domain of test functions
     all_dataset = {}
 
-    for j in range(n_search_space):
-        vx = jax.random.uniform(key, (n_discrete_points, n_func_dims[j]))
-        vx_dataset = vx
+    ls_idx = 0
+    for i in range(n_search_space):
+        dataset_i = {}
+        constant = constants[i]
+        lengthscale = ls[ls_idx:ls_idx + n_func_dims[i]]
+        ls_idx += n_func_dims[i]
+        sig_var = sig_vars[i]
+        noise_var = noise_vars[i]
 
-        constant = n_constants[j]
-        lengthscale = n_ls[j]
-        sig_var = n_sig_vars[j]
-        noise_var = n_noise_vars[j]
-
-        params_j = GPParams(
+        params_i = defs.GPParams(
             model={
                 'constant': constant,
                 'lengthscale': lengthscale,
                 'signal_variance': sig_var,
                 'noise_variance': noise_var
-            })
-
+        })
         mean_func = mean.constant
-        key, init_key = jax.random.split(key)
-        dataset = [(vx, gp.sample_from_gp(key, mean_func, cov_func, params_j, vx, num_samples=n_funcs[j]), 'all_data')]
 
-        vy = dataset[0][1]
-        for i in range(vy.shape[1]):
-            dataset.append((vx_dataset, vy[:, i:i + 1]))
+        for j in range(n_funcs[i]):
+            new_key, key = jax.random.split(key)
+            vx = jax.random.uniform(new_key, (n_discrete_points[i], n_func_dims[i]))
 
-        all_dataset[j] = dataset
+            new_key, key = jax.random.split(key)
+            vy = gp.sample_from_gp(new_key, mean_func, cov_func, params_i, vx, num_samples=1)
+            dataset_i[j] = SubDataset(x=vx, y=vy)
+        all_dataset[i] = dataset_i
 
     return all_dataset
 
 
 # n_funcs: function # per search space
-def hpob_gen_synthetic(n_search_space, n_funcs, n_func_dims, const_params, ls_params, sig_var_params, noise_var_params,
-                       const_prior='gamma', ls_prior='gamma', sig_var_prior='gamma', noise_var_prior='gamma'):
-    n_constants = generate_param_from_prior(n_search_space, const_params, const_prior)
-    n_ls = generate_param_from_prior(n_search_space, ls_params, ls_prior)
-    n_sig_vars = generate_param_from_prior(n_search_space, sig_var_params, sig_var_prior)
-    n_noise_vars = generate_param_from_prior(n_search_space, noise_var_params, noise_var_prior)
+def hyperbo_plus_gen_synthetic(key, n_search_space, n_funcs, n_func_dims, n_discrete_points, cov_func, const_params, ls_params, sig_var_params, noise_var_params,
+                               const_prior='normal', ls_prior='gamma', sig_var_prior='gamma', noise_var_prior='gamma'):
+    new_key, key = jax.random.split(key)
+    constants = generate_param_from_prior(new_key, n_search_space, const_params, const_prior)
+    new_key, key = jax.random.split(key)
+    ls = generate_param_from_prior(new_key, sum(n_func_dims), ls_params, ls_prior)
+    new_key, key = jax.random.split(key)
+    sig_vars = generate_param_from_prior(new_key, n_search_space, sig_var_params, sig_var_prior)
+    new_key, key = jax.random.split(key)
+    noise_vars = generate_param_from_prior(new_key, n_search_space, noise_var_params, noise_var_prior)
 
-    print("constants: ", n_constants)
-    print("lengthscales: ", n_ls)
-    print("signal variance: ", n_sig_vars)
-    print("noise variance: ", n_noise_vars)
-
-    synthetic_data = generate_synthetic_data(n_search_space, n_constants, n_ls, n_sig_vars, n_noise_vars, n_funcs,
-                                             n_func_dims, kernel=kernel_list[0], n_discrete_points=100)
+    new_key, key = jax.random.split(key)
+    synthetic_data = generate_synthetic_data(key, n_search_space, cov_func, constants, ls, sig_vars, noise_vars, n_funcs,
+                                             n_func_dims, n_discrete_points)
     return synthetic_data
 
-'''
-example = hpob_gen_synthetic(n_search_space = 6, n_funcs = [3, 3, 3, 3, 3, 3], n_func_dims = [2, 2, 2, 2, 2, 2], 
-                         const_params = [8, 2], ls_params = [1, 2], sig_var_params = [0.5, 1], noise_var_params = [1, 1000])
-'''
+
+synthetic_data_path = './synthetic_data/dataset_0.npy'
+
+
+def hyperbo_plus_synthetic_dataset_combined(search_space_index):
+    dataset_all = np.load(synthetic_data_path, allow_pickle=True).item()
+    return dataset_all[search_space_index]
+
+
+def hyperbo_plus_synthetic_dataset_split(search_space_index):
+    dataset_all = np.load(synthetic_data_path, allow_pickle=True).item()
+    dataset_i = dataset_all[search_space_index]
+    train_subdatasets = {}
+    test_subdatasets = {}
+    keys = list(dataset_i.keys())
+    n_train = int(len(keys) * 0.8)
+    for key in keys[:n_train]:
+        train_subdatasets[key] = dataset_i[key]
+    for key in keys[n_train:]:
+        test_subdatasets[key] = dataset_i[key]
+    return train_subdatasets, test_subdatasets
+

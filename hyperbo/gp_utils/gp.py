@@ -201,6 +201,161 @@ def infer_parameters(mean_func,
   return params
 
 
+# hard coded for now.
+def infer_parameters_return_loss(mean_func,
+                     cov_func,
+                     init_params,
+                     dataset,
+                     warp_func=None,
+                     objective=obj.neg_log_marginal_likelihood,
+                     key=None,
+                     params_save_file=None):
+  """Posterior inference for a meta GP.
+
+  Args:
+    mean_func: mean function handle that maps from (params, n x d input,
+      warp_func) to an n dimensional mean vector. (see vector_map in mean.py for
+      more details).
+    cov_func: covariance function handle that maps from (params, n1 x d input1,
+      n2 x d input2, wrap_func) to a n1 x n2  covariance matrix (see matrix_map
+      in kernel.py for more details).
+    init_params: GPParams, initial parameters for covariance, mean and noise
+      variance, together with config parameters including 'method', a str
+      indicating which method should be used. Currently it supports 'bfgs' and
+      'momentum'.
+    dataset: Dict[Union[int, str], SubDataset], a dictionary mapping from key to
+      SubDataset.
+    warp_func: optional dictionary that specifies the warping function for each
+      parameter.
+    objective: objective loss function to minimize. Curently support
+      neg_log_marginal_likelihood or sample_mean_cov_regularizer or linear
+      combinations of them.
+    key: Jax random state.
+    params_save_file: optional file name to save params.
+
+  Returns:
+    Dictionary of inferred parameters.
+  """
+  if key is None:
+    key = jax.random.PRNGKey(0)
+    logging.info('Using default random state in infer_parameters.')
+  if not dataset:
+    logging.info('No dataset present to train GP.')
+    return init_params
+  params = init_params
+  method = params.config['method']
+  batch_size = params.config['batch_size']
+  # TODO(wangzi): clean this up.
+  if method == 'lbfgs':
+    # To handle very large sub datasets.
+    key, subkey = jax.random.split(key, 2)
+    dataset_iter = data_utils.sub_sample_dataset_iterator(
+        subkey, dataset, batch_size)
+    dataset = next(dataset_iter)
+
+  maxiter = init_params.config['maxiter']
+  logging_interval = init_params.config['logging_interval']
+
+  if maxiter <= 0 and method != 'slice_sample':
+    return init_params
+
+  if method == 'adam':
+    @jit
+    def loss_func(model_params, batch):
+      return objective(
+          mean_func=mean_func,
+          cov_func=cov_func,
+          params=GPParams(model=model_params, config=init_params.config),
+          dataset=batch,
+          warp_func=warp_func)
+
+    optimizer = optax.adam(params.config['learning_rate'])
+    opt_state = optimizer.init(params.model)
+
+    key, subkey = jax.random.split(key, 2)
+    dataset_iter = data_utils.sub_sample_dataset_iterator(
+        subkey, dataset, batch_size)
+    model_param = params.model
+    for i in range(maxiter):
+      batch = next(dataset_iter)
+      current_loss, grads = jax.value_and_grad(loss_func)(model_param, batch)
+      if jnp.isfinite(current_loss):
+        params.model = model_param
+      else:
+        logging.info(msg=f'{method} stopped due to instability.')
+        break
+      updates, opt_state = optimizer.update(grads, opt_state)
+      model_param = optax.apply_updates(model_param, updates)
+      if i % logging_interval == 0:
+        params_utils.log_params_loss(
+            step=i,
+            params=params,
+            loss=current_loss,
+            warp_func=warp_func,
+            params_save_file=params_save_file)
+    current_loss = loss_func(model_param, batch)
+    if jnp.isfinite(current_loss):
+      params.model = model_param
+    params_utils.log_params_loss(
+        step=maxiter,
+        params=params,
+        loss=current_loss,
+        warp_func=warp_func,
+        params_save_file=params_save_file)
+  else:
+    # @jit
+    def loss_func(model_params):
+      return objective(
+          mean_func=mean_func,
+          cov_func=cov_func,
+          params=GPParams(model=model_params, config=init_params.config),
+          dataset=dataset,
+          warp_func=warp_func)
+
+    if method == 'bfgs':
+      params.model, _ = bfgs.bfgs(
+          loss_func,
+          params.model,
+          tol=params.config['tol'],
+          maxiter=params.config['maxiter'])
+    elif method == 'lbfgs':
+
+      def lbfgs_callback(step, model_params, loss):
+        if step % logging_interval != 0:
+          return
+        params.model = model_params
+        params_utils.log_params_loss(
+            step,
+            params,
+            loss,
+            warp_func=warp_func,
+            params_save_file=params_save_file)
+
+      if 'alpha' not in params.config:
+        alpha = 1.0
+      else:
+        alpha = params.config['alpha']
+      init_loss = loss_func(params.model)
+      current_loss, params.model, _ = lbfgs.lbfgs(
+          loss_func,
+          params.model,
+          steps=params.config['maxiter'],
+          alpha=alpha,
+          callback=lbfgs_callback)
+      after_loss = loss_func(params.model)
+      params_utils.log_params_loss(
+          step=maxiter,
+          params=params,
+          loss=current_loss,
+          warp_func=warp_func,
+          params_save_file=params_save_file)
+      return params, init_loss, after_loss
+    else:
+      raise ValueError(f'Optimization method {method} is not supported.')
+  params.cache = {}
+  return params
+
+
 def sample_from_gp(key,
                    mean_func,
                    cov_func,
@@ -490,6 +645,36 @@ class GP:
         params_save_file=params_save_file)
     logging.info(msg=f'params = {self.params}')
     return self.params
+
+  def train_return_loss(self, key=None, params_save_file=None):
+    """Train the GP by fitting it to the dataset.
+
+    Args:
+      key: Jax random state.
+      params_save_file: optional file name to save params.
+
+    Returns:
+      params: GPParams.
+    """
+    if key is None:
+      if self.rng is None:
+        self.rng = jax.random.PRNGKey(0)
+        logging.info('Using default random state in GP.train.')
+      key, subkey = jax.random.split(self.rng, 2)
+      self.rng = key
+    else:
+      key, subkey = jax.random.split(key, 2)
+    self.params, init_loss, after_loss = infer_parameters_return_loss(
+        mean_func=self.mean_func,
+        cov_func=self.cov_func,
+        init_params=self.params,
+        dataset=self.dataset,
+        warp_func=self.warp_func,
+        objective=self.params.config['objective'],
+        key=subkey,
+        params_save_file=params_save_file)
+    logging.info(msg=f'params = {self.params}')
+    return self.params, init_loss, after_loss
 
   def neg_log_marginal_likelihood(self) -> float:
     """Compute negative log marginal likelihood for current model."""

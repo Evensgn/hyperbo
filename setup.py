@@ -28,6 +28,7 @@ setup(
         'jaxopt',
         'tensorflow_probability',
         'tensorflow>=2.5.0',
+        'xgboost'
     ],
     extras_require={},
     classifiers=[

@@ -149,7 +149,6 @@ def kl_multivariate_normal(mu0,
 
 
 
-
 def cholesky_cache(spd_matrix, cached_cholesky):
   """Computes the Cholesky factor of `spd_matrix` unless one is already given."""
   if cached_cholesky is not None:
