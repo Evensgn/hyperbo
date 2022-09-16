@@ -28,7 +28,8 @@ setup(
         'jaxopt',
         'tensorflow_probability',
         'tensorflow>=2.5.0',
-        'xgboost'
+        'xgboost',
+        'pathos'
     ],
     extras_require={},
     classifiers=[

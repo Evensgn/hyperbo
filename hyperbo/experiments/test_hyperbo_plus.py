@@ -48,9 +48,9 @@ def gamma_mle_correction(alpha, beta, N):
 
 
 def run_bo(run_args):
-    (key, cov_func, n_dim, baseline_params, gp_params_samples, queried_sub_dataset, ac_func, budget, n_bo_gp_params_samples) = run_args
+    (key, cov_func, n_dim, baseline_params, hyperbo_params, gp_params_samples, queried_sub_dataset, ac_func, budget, n_bo_gp_params_samples) = run_args
 
-    print('generating blank dataset')
+    print('run baseline bo')
     key, _ = jax.random.split(key)
     mean_func = mean.constant
     dataset, sub_dataset_key, _ = data.random(
@@ -64,7 +64,7 @@ def run_bo(run_args):
         n_func_historical=0,
         m_points_historical=0
     )
-    print('run baseline bo')
+    key, _ = jax.random.split(key)
     baseline_observations, _, _ = bayesopt.run_synthetic(
         dataset=dataset,
         sub_dataset_key=sub_dataset_key,
@@ -77,7 +77,37 @@ def run_bo(run_args):
         iters=budget
     )
 
-    print('generating blank dataset')
+    if hyperbo_params:
+        print('run hyperbo bo')
+        key, _ = jax.random.split(key)
+        mean_func = mean.constant
+        dataset, sub_dataset_key, _ = data.random(
+            key=key,
+            mean_func=mean_func,
+            cov_func=cov_func,
+            params=hyperbo_params,
+            dim=n_dim,
+            n_observed=0,
+            n_queries=0,
+            n_func_historical=0,
+            m_points_historical=0
+        )
+        key, _ = jax.random.split(key)
+        hyperbo_observations, _, _ = bayesopt.run_synthetic(
+            dataset=dataset,
+            sub_dataset_key=sub_dataset_key,
+            queried_sub_dataset=queried_sub_dataset,
+            mean_func=mean_func,
+            cov_func=cov_func,
+            init_params=hyperbo_params,
+            warp_func=None,
+            ac_func=ac_func,
+            iters=budget
+        )
+
+    print('run random bo')
+    key, _ = jax.random.split(key)
+    mean_func = mean.constant
     dataset, sub_dataset_key, _ = data.random(
         key=key,
         mean_func=mean_func,
@@ -89,8 +119,32 @@ def run_bo(run_args):
         n_func_historical=0,
         m_points_historical=0
     )
+    key, _ = jax.random.split(key)
+    random_observations, _, _ = bayesopt.run_synthetic(
+        dataset=dataset,
+        sub_dataset_key=sub_dataset_key,
+        queried_sub_dataset=queried_sub_dataset,
+        mean_func=mean_func,
+        cov_func=cov_func,
+        init_params=baseline_params,
+        warp_func=None,
+        ac_func=acfun.rand,
+        iters=budget
+    )
 
     print('run hyperbo+ bo')
+    key, _ = jax.random.split(key)
+    dataset, sub_dataset_key, _ = data.random(
+        key=key,
+        mean_func=mean_func,
+        cov_func=cov_func,
+        params=baseline_params,
+        dim=n_dim,
+        n_observed=0,
+        n_queries=0,
+        n_func_historical=0,
+        m_points_historical=0
+    )
     key, _ = jax.random.split(key)
     gamma_observations = bayesopt.run_bo_with_gp_params_samples(
         key=key,
@@ -117,6 +171,23 @@ def run_bo(run_args):
             max_y = y[0]
         baseline_regrets.append(max_f - max_y)
 
+    if hyperbo_params:
+        hyperbo_regrets = []
+        max_y = -jnp.inf
+        for y in hyperbo_observations[1]:
+            if y[0] > max_y:
+                max_y = y[0]
+            hyperbo_regrets.append(max_f - max_y)
+    else:
+        hyperbo_regrets = None
+
+    random_regrets = []
+    max_y = -jnp.inf
+    for y in random_observations[1]:
+        if y[0] > max_y:
+            max_y = y[0]
+        random_regrets.append(max_f - max_y)
+
     gamma_regrets = []
     max_y = -jnp.inf
     for y in gamma_observations[1]:
@@ -125,10 +196,10 @@ def run_bo(run_args):
         gamma_regrets.append(max_f - max_y)
 
     print('run bo done')
-    return baseline_regrets, gamma_regrets
+    return baseline_regrets, hyperbo_regrets, random_regrets, gamma_regrets
 
 
-def test_bo(key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func, gp_distribution_params):
+def test_bo(key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func, gp_distribution_params, hyperbo_params):
     n_dim = list(dataset.values())[0].x.shape[1]
 
     baseline_params = GPParams(
@@ -171,7 +242,7 @@ def test_bo(key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples,
         q += 1
         new_key, key = jax.random.split(key)
         for i in range(n_bo_runs):
-            task_list.append((key, cov_func, n_dim, baseline_params, gp_params_samples, sub_dataset, ac_func, budget, n_bo_gamma_samples))
+            task_list.append((key, cov_func, n_dim, baseline_params, hyperbo_params, gp_params_samples, sub_dataset, ac_func, budget, n_bo_gamma_samples))
         size_list.append((q, sub_dataset.x.shape[0]))
     print('task_list constructed, {}'.format(len(task_list)))
     print('size_list constructed, {}'.format(size_list))
@@ -186,18 +257,36 @@ def test_bo(key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples,
     print('task_outputs computed')
 
     baseline_regrets_list = []
+    hyperbo_regrets_list = []
+    random_regrets_list = []
     gamma_regrets_list = []
     for task_output in task_outputs:
-        baseline_regrets, gamma_regrets = task_output
+        baseline_regrets, hyperbo_regrets, random_regrets, gamma_regrets = task_output
         baseline_regrets_list.append(baseline_regrets)
+        if hyperbo_params:
+            hyperbo_regrets_list.append(hyperbo_regrets)
+        random_regrets_list.append(random_regrets)
         gamma_regrets_list.append(gamma_regrets)
     baseline_regrets_list = jnp.array(baseline_regrets_list)
     baseline_regrets_mean = jnp.mean(baseline_regrets_list, axis=0)
     baseline_regrets_std = jnp.std(baseline_regrets_list, axis=0)
+    if hyperbo_params:
+        hyperbo_regrets_list = jnp.array(hyperbo_regrets_list)
+        hyperbo_regrets_mean = jnp.mean(hyperbo_regrets_list, axis=0)
+        hyperbo_regrets_std = jnp.std(hyperbo_regrets_list, axis=0)
+    else:
+        hyperbo_regrets_list = None
+        hyperbo_regrets_mean = None
+        hyperbo_regrets_std = None
+    random_regrets_list = jnp.array(random_regrets_list)
+    random_regrets_mean = jnp.mean(random_regrets_list, axis=0)
+    random_regrets_std = jnp.std(random_regrets_list, axis=0)
     gamma_regrets_list = jnp.array(gamma_regrets_list)
     gamma_regrets_mean = jnp.mean(gamma_regrets_list, axis=0)
     gamma_regrets_std = jnp.std(gamma_regrets_list, axis=0)
     return baseline_regrets_mean, baseline_regrets_std, baseline_regrets_list, \
+           hyperbo_regrets_mean, hyperbo_regrets_std, hyperbo_regrets_list, \
+           random_regrets_mean, random_regrets_std, random_regrets_list, \
            gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list
 
 
@@ -251,15 +340,6 @@ def fit_gp_params(key, dataset, cov_func, objective, opt_method, gp_fit_maxiter)
 
     model.initialize_params(init_key)
 
-    # @jit
-    def nll_func(model_params):
-        return obj.neg_log_marginal_likelihood(
-          mean_func=mean_func,
-          cov_func=cov_func,
-          params=GPParams(model=model_params, config=init_params.config),
-          dataset=dataset,
-          warp_func=warp_func)
-
     inferred_params, init_nll, inferred_nll = model.train_return_loss()
 
     param_keys = init_params.model.keys()
@@ -276,8 +356,9 @@ def fit_gp_params(key, dataset, cov_func, objective, opt_method, gp_fit_maxiter)
     return retrieved_inferred_params, nll_logs
 
 
-def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_list, n_workers, kernel_name, cov_func,
-        objective, opt_method, budget, n_bo_runs, n_bo_gamma_samples, ac_func_type, gp_fit_maxiter):
+def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_list, setup_b_id_list,
+        n_workers, kernel_name, cov_func,objective, opt_method, budget, n_bo_runs, n_bo_gamma_samples,
+        ac_func_type, gp_fit_maxiter):
     experiment_name = 'test_hyperbo_plus_{}'.format(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
 
     if ac_func_type == 'ucb':
@@ -296,6 +377,7 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
     results['experiment_name'] = experiment_name
     results['train_id_list'] = train_id_list
     results['test_id_list'] = test_id_list
+    results['setup_b_id_list'] = setup_b_id_list
     results['n_workers'] = n_workers
     results['kernel_name'] = kernel_name
     results['cov_func'] = cov_func
@@ -308,20 +390,25 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
 
     pool = ProcessingPool(nodes=n_workers)
 
+    # setup a
+
+    results['setup_a'] = {}
+    results_a = results['setup_a']
+
     # fit gp parameters
     constant_list = []
     lengthscale_list = []
     signal_variance_list = []
     noise_variance_list = []
 
-    results['fit_gp_params'] = {}
+    results_a['fit_gp_params'] = {}
     for train_id in train_id_list:
         print('train_id = {}'.format(train_id))
         dataset = dataset_func_combined(train_id)
         print('Dataset loaded')
         new_key, key = jax.random.split(key)
         gp_params, nll_logs = fit_gp_params(new_key, dataset, cov_func, objective, opt_method, gp_fit_maxiter)
-        results['fit_gp_params'][train_id] = {'gp_params': gp_params, 'nll_logs': nll_logs}
+        results_a['fit_gp_params'][train_id] = {'gp_params': gp_params, 'nll_logs': nll_logs}
         constant_list.append(gp_params['constant'])
         lengthscale_list += list(gp_params['lengthscale'])
         signal_variance_list.append(gp_params['signal_variance'])
@@ -333,14 +420,19 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
     gp_distribution_params['signal_variance'] = gamma_param_from_thetas(np.array(signal_variance_list))
     gp_distribution_params['noise_variance'] = gamma_param_from_thetas(np.array(noise_variance_list))
 
-    results['gp_distribution_params'] = gp_distribution_params
+    results_a['gp_distribution_params'] = gp_distribution_params
 
     # run BO
-    results['bo_results'] = {}
+    results_a['bo_results'] = {}
     baseline_regrets_mean_list = []
     baseline_regrets_std_list = []
+    baseline_regrets_all_list = []
+    random_regrets_mean_list = []
+    random_regrets_std_list = []
+    random_regrets_all_list = []
     gamma_regrets_mean_list = []
     gamma_regrets_std_list = []
+    gamma_regrets_all_list = []
 
     for test_id in test_id_list:
         print('test_id = {}'.format(test_id))
@@ -348,39 +440,184 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
         print('Dataset loaded')
         time_0 = time.time()
         new_key, key = jax.random.split(key)
-        baseline_regrets_mean, baseline_regrets_std, baseline_regrets_list, gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list = \
-            test_bo(new_key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func, gp_distribution_params)
-        results['bo_results'][test_id] = {
+        baseline_regrets_mean, baseline_regrets_std, baseline_regrets_list, \
+        _, _, _, \
+        random_regrets_mean, random_regrets_std, random_regrets_list, \
+        gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list = \
+            test_bo(new_key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func, gp_distribution_params, None)
+        results_a['bo_results'][test_id] = {
             'baseline_regrets_mean': baseline_regrets_mean,
             'baseline_regrets_std': baseline_regrets_std,
             'baseline_regrets_list': baseline_regrets_std_list,
+            'random_regrets_mean': random_regrets_mean,
+            'random_regrets_std': random_regrets_std,
+            'random_regrets_list': random_regrets_list,
             'gamma_regrets_mean': gamma_regrets_mean,
             'gamma_regrets_std': gamma_regrets_std,
             'gamma_regrets_list': gamma_regrets_std_list,
         }
         print('baseline_regrets_mean = {}'.format(baseline_regrets_mean))
         print('baseline_regrets_std = {}'.format(baseline_regrets_std))
+        print('random_regrets_mean = {}'.format(random_regrets_mean))
+        print('random_regrets_std = {}'.format(random_regrets_std))
         print('gamma_regrets_mean = {}'.format(gamma_regrets_mean))
         print('gamma_regrets_std = {}'.format(gamma_regrets_std))
         baseline_regrets_mean_list.append(baseline_regrets_mean)
         baseline_regrets_std_list.append(baseline_regrets_std)
+        baseline_regrets_all_list.append(baseline_regrets_list)
+        random_regrets_mean_list.append(random_regrets_mean)
+        random_regrets_std_list.append(random_regrets_std)
+        random_regrets_all_list.append(random_regrets_list)
         gamma_regrets_mean_list.append(gamma_regrets_mean)
         gamma_regrets_std_list.append(gamma_regrets_std)
+        gamma_regrets_all_list.append(gamma_regrets_list)
         time_1 = time.time()
-        print('Time elapsed for {}: {}'.format(test_id, time_1 - time_0))
-        input()
+        print('Time elapsed for test_id {}: {}'.format(test_id, time_1 - time_0))
 
-    baseline_regrets_mean_list = jnp.array(baseline_regrets_mean_list)
-    baseline_regrets_std_list = jnp.array(baseline_regrets_std_list)
-    gamma_regrets_mean_list = jnp.array(gamma_regrets_mean_list)
-    gamma_regrets_std_list = jnp.array(gamma_regrets_std_list)
-    baseline_regrets_mean_total = jnp.mean(baseline_regrets_mean_list, axis=0)
-    baseline_regrets_std_total = jnp.mean(baseline_regrets_std_list, axis=0)
-    gamma_regrets_mean_total = jnp.mean(gamma_regrets_mean_list, axis=0)
-    gamma_regrets_std_total = jnp.mean(gamma_regrets_std_list, axis=0)
-    results['bo_results_total'] = {
+    baseline_regrets_all_list = jnp.concatenate(baseline_regrets_all_list, axis=0)
+    baseline_regrets_mean_total = jnp.mean(baseline_regrets_all_list, axis=0)
+    baseline_regrets_std_total = jnp.std(baseline_regrets_all_list, axis=0)
+    random_regrets_all_list = jnp.concatenate(random_regrets_all_list, axis=0)
+    random_regrets_mean_total = jnp.mean(random_regrets_all_list, axis=0)
+    random_regrets_std_total = jnp.std(random_regrets_all_list, axis=0)
+    gamma_regrets_all_list = jnp.concatenate(gamma_regrets_all_list, axis=0)
+    gamma_regrets_mean_total = jnp.mean(gamma_regrets_all_list, axis=0)
+    gamma_regrets_std_total = jnp.std(gamma_regrets_all_list, axis=0)
+
+    results_a['bo_results_total'] = {
+        'baseline_regrets_all_list': baseline_regrets_all_list,
         'baseline_regrets_mean': baseline_regrets_mean_total,
         'baseline_regrets_std': baseline_regrets_std_total,
+        'random_regrets_all_list': random_regrets_all_list,
+        'random_regrets_mean': random_regrets_mean_total,
+        'random_regrets_std': random_regrets_std_total,
+        'gamma_regrets_all_list': gamma_regrets_all_list,
+        'gamma_regrets_mean': gamma_regrets_mean_total,
+        'gamma_regrets_std': gamma_regrets_std_total
+    }
+
+    # setup b
+    results['setup_b'] = {}
+    results_b = results['setup_b']
+
+    # fit gp parameters
+    constant_list = []
+    lengthscale_list = []
+    signal_variance_list = []
+    noise_variance_list = []
+
+    hyperbo_params = {}
+
+    results_b['fit_gp_params'] = {}
+    for train_id in setup_b_id_list:
+        print('train_id = {}'.format(train_id))
+        dataset, _ = dataset_func_split(train_id) # only use training set
+        print('Dataset loaded')
+        new_key, key = jax.random.split(key)
+        gp_params, nll_logs = fit_gp_params(new_key, dataset, cov_func, objective, opt_method, gp_fit_maxiter)
+        results_b['fit_gp_params'][train_id] = {'gp_params': gp_params, 'nll_logs': nll_logs}
+        constant_list.append(gp_params['constant'])
+        lengthscale_list += list(gp_params['lengthscale'])
+        signal_variance_list.append(gp_params['signal_variance'])
+        noise_variance_list.append(gp_params['noise_variance'])
+        hyperbo_params[train_id] = GPParams(model=gp_params)
+
+    gp_distribution_params = {}
+    gp_distribution_params['constant'] = normal_param_from_thetas(np.array(constant_list))
+    gp_distribution_params['lengthscale'] = gamma_param_from_thetas(np.array(lengthscale_list))
+    gp_distribution_params['signal_variance'] = gamma_param_from_thetas(np.array(signal_variance_list))
+    gp_distribution_params['noise_variance'] = gamma_param_from_thetas(np.array(noise_variance_list))
+
+    results_b['gp_distribution_params'] = gp_distribution_params
+
+    # run BO
+    results_b['bo_results'] = {}
+    baseline_regrets_mean_list = []
+    baseline_regrets_std_list = []
+    baseline_regrets_all_list = []
+    hyperbo_regrets_mean_list = []
+    hyperbo_regrets_std_list = []
+    hyperbo_regrets_all_list = []
+    random_regrets_mean_list = []
+    random_regrets_std_list = []
+    random_regrets_all_list = []
+    gamma_regrets_mean_list = []
+    gamma_regrets_std_list = []
+    gamma_regrets_all_list = []
+
+    for test_id in setup_b_id_list:
+        print('test_id = {}'.format(test_id))
+        _, dataset = dataset_func_split(test_id) # only use test set
+        print('Dataset loaded')
+        time_0 = time.time()
+        new_key, key = jax.random.split(key)
+        baseline_regrets_mean, baseline_regrets_std, baseline_regrets_list, \
+        hyperbo_regrets_mean, hyperbo_regrets_std, hyperbo_regrets_list, \
+        random_regrets_mean, random_regrets_std, random_regrets_list, \
+        gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list = \
+            test_bo(new_key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func,
+                    gp_distribution_params, hyperbo_params[test_id])
+        results_b['bo_results'][test_id] = {
+            'baseline_regrets_mean': baseline_regrets_mean,
+            'baseline_regrets_std': baseline_regrets_std,
+            'baseline_regrets_list': baseline_regrets_std_list,
+            'hyperbo_regrets_mean': hyperbo_regrets_mean,
+            'hyperbo_regrets_std': hyperbo_regrets_std,
+            'hyperbo_regrets_list': hyperbo_regrets_list,
+            'random_regrets_mean': random_regrets_mean,
+            'random_regrets_std': random_regrets_std,
+            'random_regrets_list': random_regrets_list,
+            'gamma_regrets_mean': gamma_regrets_mean,
+            'gamma_regrets_std': gamma_regrets_std,
+            'gamma_regrets_list': gamma_regrets_std_list,
+        }
+        print('baseline_regrets_mean = {}'.format(baseline_regrets_mean))
+        print('baseline_regrets_std = {}'.format(baseline_regrets_std))
+        print('hyperbo_regrets_mean = {}'.format(hyperbo_regrets_mean))
+        print('hyperbo_regrets_std = {}'.format(hyperbo_regrets_std))
+        print('random_regrets_mean = {}'.format(random_regrets_mean))
+        print('random_regrets_std = {}'.format(random_regrets_std))
+        print('gamma_regrets_mean = {}'.format(gamma_regrets_mean))
+        print('gamma_regrets_std = {}'.format(gamma_regrets_std))
+        baseline_regrets_mean_list.append(baseline_regrets_mean)
+        baseline_regrets_std_list.append(baseline_regrets_std)
+        baseline_regrets_all_list.append(baseline_regrets_list)
+        hyperbo_regrets_mean_list.append(hyperbo_regrets_mean)
+        hyperbo_regrets_std_list.append(hyperbo_regrets_std)
+        hyperbo_regrets_all_list.append(hyperbo_regrets_list)
+        random_regrets_mean_list.append(random_regrets_mean)
+        random_regrets_std_list.append(random_regrets_std)
+        random_regrets_all_list.append(random_regrets_list)
+        gamma_regrets_mean_list.append(gamma_regrets_mean)
+        gamma_regrets_std_list.append(gamma_regrets_std)
+        gamma_regrets_all_list.append(gamma_regrets_list)
+        time_1 = time.time()
+        print('Time elapsed for test_id {}: {}'.format(test_id, time_1 - time_0))
+
+    baseline_regrets_all_list = jnp.concatenate(baseline_regrets_all_list, axis=0)
+    baseline_regrets_mean_total = jnp.mean(baseline_regrets_all_list, axis=0)
+    baseline_regrets_std_total = jnp.std(baseline_regrets_all_list, axis=0)
+    hyperbo_regrets_all_list = jnp.concatenate(hyperbo_regrets_all_list, axis=0)
+    hyperbo_regrets_mean_total = jnp.mean(hyperbo_regrets_all_list, axis=0)
+    hyperbo_regrets_std_total = jnp.std(hyperbo_regrets_all_list, axis=0)
+    random_regrets_all_list = jnp.concatenate(random_regrets_all_list, axis=0)
+    random_regrets_mean_total = jnp.mean(random_regrets_all_list, axis=0)
+    random_regrets_std_total = jnp.std(random_regrets_all_list, axis=0)
+    gamma_regrets_all_list = jnp.concatenate(gamma_regrets_all_list, axis=0)
+    gamma_regrets_mean_total = jnp.mean(gamma_regrets_all_list, axis=0)
+    gamma_regrets_std_total = jnp.std(gamma_regrets_all_list, axis=0)
+
+    results_b['bo_results_total'] = {
+        'baseline_regrets_all_list': baseline_regrets_all_list,
+        'baseline_regrets_mean': baseline_regrets_mean_total,
+        'baseline_regrets_std': baseline_regrets_std_total,
+        'hyperbo_regrets_all_list': hyperbo_regrets_all_list,
+        'hyperbo_regrets_mean': hyperbo_regrets_mean_total,
+        'hyperbo_regrets_std': hyperbo_regrets_std_total,
+        'random_regrets_all_list': random_regrets_all_list,
+        'random_regrets_mean': random_regrets_mean_total,
+        'random_regrets_std': random_regrets_std_total,
+        'gamma_regrets_all_list': gamma_regrets_all_list,
         'gamma_regrets_mean': gamma_regrets_mean_total,
         'gamma_regrets_std': gamma_regrets_std_total
     }
@@ -409,23 +646,56 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
         f.write('\n')
         for train_id in train_id_list:
             f.write('train_id = {}\n'.format(train_id))
-            f.write('nll_logs = {}\n'.format(results['fit_gp_params'][train_id]['nll_logs']))
+            f.write('nll_logs = {}\n'.format(results_a['fit_gp_params'][train_id]['nll_logs']))
             f.write('\n')
         f.write('gp_distribution_params = {}\n'.format(gp_distribution_params))
         f.write('\n')
 
         for test_id in test_id_list:
             f.write('test_id = {}\n'.format(test_id))
-            f.write('baseline_regrets_mean = {}\n'.format(results['bo_results'][test_id]['baseline_regrets_mean']))
-            f.write('baseline_regrets_std = {}\n'.format(results['bo_results'][test_id]['baseline_regrets_std']))
-            f.write('gamma_regrets_mean = {}\n'.format(results['bo_results'][test_id]['gamma_regrets_mean']))
-            f.write('gamma_regrets_std = {}\n'.format(results['bo_results'][test_id]['gamma_regrets_std']))
+            f.write('baseline_regrets_mean = {}\n'.format(results_a['bo_results'][test_id]['baseline_regrets_mean']))
+            f.write('baseline_regrets_std = {}\n'.format(results_a['bo_results'][test_id]['baseline_regrets_std']))
+            f.write('random_regrets_mean = {}\n'.format(results_a['bo_results'][test_id]['random_regrets_mean']))
+            f.write('random_regrets_std = {}\n'.format(results_a['bo_results'][test_id]['random_regrets_std']))
+            f.write('gamma_regrets_mean = {}\n'.format(results_a['bo_results'][test_id]['gamma_regrets_mean']))
+            f.write('gamma_regrets_std = {}\n'.format(results_a['bo_results'][test_id]['gamma_regrets_std']))
             f.write('\n')
 
-        f.write('baseline_regrets_mean_total = {}\n'.format(baseline_regrets_mean_total))
-        f.write('baseline_regrets_std_total = {}\n'.format(baseline_regrets_std_total))
-        f.write('gamma_regrets_mean_total = {}\n'.format(gamma_regrets_mean_total))
-        f.write('gamma_regrets_std_total = {}\n'.format(gamma_regrets_std_total))
+        f.write('baseline_regrets_mean_total = {}\n'.format(results_a['bo_results_total']['baseline_regrets_mean']))
+        f.write('baseline_regrets_std_total = {}\n'.format(results_a['bo_results_total']['baseline_regrets_std']))
+        f.write('random_regrets_mean_total = {}\n'.format(results_a['bo_results_total']['random_regrets_mean']))
+        f.write('random_regrets_std_total = {}\n'.format(results_a['bo_results_total']['random_regrets_std']))
+        f.write('gamma_regrets_mean_total = {}\n'.format(results_a['bo_results_total']['gamma_regrets_mean']))
+        f.write('gamma_regrets_std_total = {}\n'.format(results_a['bo_results_total']['gamma_regrets_std']))
+
+        f.write('\n\n setup b \n')
+        for train_id in setup_b_id_list:
+            f.write('train_id = {}\n'.format(train_id))
+            f.write('nll_logs = {}\n'.format(results_b['fit_gp_params'][train_id]['nll_logs']))
+            f.write('\n')
+        f.write('gp_distribution_params = {}\n'.format(gp_distribution_params))
+        f.write('\n')
+
+        for test_id in setup_b_id_list:
+            f.write('test_id = {}\n'.format(test_id))
+            f.write('baseline_regrets_mean = {}\n'.format(results_b['bo_results'][test_id]['baseline_regrets_mean']))
+            f.write('baseline_regrets_std = {}\n'.format(results_b['bo_results'][test_id]['baseline_regrets_std']))
+            f.write('hyperbo_regrets_mean = {}\n'.format(results_b['bo_results'][test_id]['hyperbo_regrets_mean']))
+            f.write('hyperbo_regrets_std = {}\n'.format(results_b['bo_results'][test_id]['hyperbo_regrets_std']))
+            f.write('random_regrets_mean = {}\n'.format(results_b['bo_results'][test_id]['random_regrets_mean']))
+            f.write('random_regrets_std = {}\n'.format(results_b['bo_results'][test_id]['random_regrets_std']))
+            f.write('gamma_regrets_mean = {}\n'.format(results_b['bo_results'][test_id]['gamma_regrets_mean']))
+            f.write('gamma_regrets_std = {}\n'.format(results_b['bo_results'][test_id]['gamma_regrets_std']))
+            f.write('\n')
+
+        f.write('baseline_regrets_mean_total = {}\n'.format(results_b['bo_results_total']['baseline_regrets_mean']))
+        f.write('baseline_regrets_std_total = {}\n'.format(results_b['bo_results_total']['baseline_regrets_std']))
+        f.write('hyperbo_regrets_mean_total = {}\n'.format(results_b['bo_results_total']['hyperbo_regrets_mean']))
+        f.write('hyperbo_regrets_std_total = {}\n'.format(results_b['bo_results_total']['hyperbo_regrets_std']))
+        f.write('random_regrets_mean_total = {}\n'.format(results_b['bo_results_total']['random_regrets_mean']))
+        f.write('random_regrets_std_total = {}\n'.format(results_b['bo_results_total']['random_regrets_std']))
+        f.write('gamma_regrets_mean_total = {}\n'.format(results_b['bo_results_total']['gamma_regrets_mean']))
+        f.write('gamma_regrets_std_total = {}\n'.format(results_b['bo_results_total']['gamma_regrets_std']))
 
     # generate plots
     plot.plot_hyperbo_plus(results)
@@ -433,8 +703,8 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
     print('done.')
 
 
-total_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767',
-                 '6794', '7607', '7609', '5889']
+hpob_full_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767',
+                     '6794', '7607', '7609', '5889']
 
 kernel_list = [
     # ('squared_exponential nll', kernel.squared_exponential, obj.nll, 'lbfgs'),
@@ -463,30 +733,37 @@ if __name__ == '__main__':
     # train_id_list = ['5860', '5906']
     # test_id_list = ['5889']
     # train_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767']
-    # train_id_list = ['6766', '4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6767']
-    # test_id_list = ['6794', '7607', '7609', '5889']
-    # dataset_func_combined = data.hpob_dataset_v2
-    # dataset_func_split = data.hpob_dataset_v3
+    # train_id_list = ['6766', '4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6767', '6794']
+    train_id_list = ['4796', '5527', '5636', '5859', '5891', '5965', '5970', '5971', '6766', '6767', '6794', '7607', '7609']
+    test_id_list = ['5860', '5906', '5889']
+    setup_b_id_list = ['4796', '5860', '5906', '7607', '7609', '5889']
+    dataset_func_combined = data.hpob_dataset_v2
+    dataset_func_split = data.hpob_dataset_v3
 
-    train_id_list = [0, 1, 2, 3, 4, 5, 6, 7]
-    test_id_list = [8, 9]
+    '''
+    train_id_list = list(range(16))
+    test_id_list = list(range(16, 20))
+    setup_b_id_list = list(range(20))
+    # train_id_list = [0, 1, 2]
+    # test_id_list = [3]
+    # setup_b_id_list = [0, 1, 2]
     dataset_func_combined = data.hyperbo_plus_synthetic_dataset_combined
     dataset_func_split = data.hyperbo_plus_synthetic_dataset_split
+    '''
 
-    # test_id_list = ['5889', '6794', '7607', '7609']
 
     n_workers = 96
-    budget = 30
+    budget = 50
     n_bo_runs = 1
     gp_fit_maxiter = 100
-    n_bo_gamma_samples = 100
+    n_bo_gamma_samples = 500
 
     key = jax.random.PRNGKey(0)
 
     for kernel_type in kernel_list:
         for ac_func_type in ['ucb']:
             new_key, key = jax.random.split(key)
-            run(new_key, dataset_func_combined, dataset_func_split, train_id_list, test_id_list,
+            run(new_key, dataset_func_combined, dataset_func_split, train_id_list, test_id_list, setup_b_id_list,
                 n_workers, kernel_type[0], kernel_type[1], kernel_type[2],
                 kernel_type[3], budget, n_bo_runs, n_bo_gamma_samples, ac_func_type, gp_fit_maxiter)
 
