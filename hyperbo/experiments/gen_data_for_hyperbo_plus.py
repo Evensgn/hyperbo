@@ -65,8 +65,8 @@ if __name__ == '__main__':
 
     const_params = [1, 1]
     ls_params = [2, 20]
-    sig_var_params = [1, 1]
-    noise_var_params = [1, 10000]
+    sig_var_params = [2, 1]
+    noise_var_params = [1, 100000]
 
     dataset, gp_params = data.hyperbo_plus_gen_synthetic(key, n_search_space, n_funcs, n_func_dims, n_discrete_points, cov_func, const_params,
                                                          ls_params, sig_var_params, noise_var_params, const_prior='normal', ls_prior='gamma',
