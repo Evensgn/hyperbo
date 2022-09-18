@@ -50,6 +50,15 @@ def gamma_mle_correction(alpha, beta, N):
 def run_bo(run_args):
     (key, cov_func, n_dim, hyperbo_params, gp_params_samples, fixed_gp_params_samples, queried_sub_dataset, ac_func, budget, n_bo_gp_params_samples) = run_args
 
+    placeholder_params = GPParams(
+        model={
+            'constant': 1.0,
+            'lengthscale': jnp.array([1.0] * n_dim),
+            'signal_variance': 1.0,
+            'noise_variance': 1e-6,
+        }
+    )
+
     if hyperbo_params:
         print('run hyperbo bo')
         key, _ = jax.random.split(key)
@@ -58,7 +67,7 @@ def run_bo(run_args):
             key=key,
             mean_func=mean_func,
             cov_func=cov_func,
-            params=hyperbo_params,
+            params=placeholder_params,
             dim=n_dim,
             n_observed=0,
             n_queries=0,
@@ -85,7 +94,7 @@ def run_bo(run_args):
         key=key,
         mean_func=mean_func,
         cov_func=cov_func,
-        params=fixed_gp_params_samples[0],
+        params=placeholder_params,
         dim=n_dim,
         n_observed=0,
         n_queries=0,
@@ -99,7 +108,7 @@ def run_bo(run_args):
         queried_sub_dataset=queried_sub_dataset,
         mean_func=mean_func,
         cov_func=cov_func,
-        init_params=fixed_gp_params_samples[0],
+        init_params=placeholder_params,
         warp_func=None,
         ac_func=acfun.rand,
         iters=budget
@@ -111,7 +120,7 @@ def run_bo(run_args):
         key=key,
         mean_func=mean_func,
         cov_func=cov_func,
-        params=fixed_gp_params_samples[0],
+        params=placeholder_params,
         dim=n_dim,
         n_observed=0,
         n_queries=0,
@@ -139,7 +148,7 @@ def run_bo(run_args):
         key=key,
         mean_func=mean_func,
         cov_func=cov_func,
-        params=fixed_gp_params_samples[0],
+        params=placeholder_params,
         dim=n_dim,
         n_observed=0,
         n_queries=0,
