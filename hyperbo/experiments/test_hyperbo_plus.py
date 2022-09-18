@@ -328,13 +328,13 @@ def hierarchical_gp_nll(key, dataset, cov_func, n_dim, n_nll_gamma_samples, gp_d
     noise_variance_gamma = Gamma(noise_variance_a, noise_variance_b)
 
     new_key, key = jax.random.split(key)
-    constants = constant_normal.sample(n_bo_gamma_samples, seed=new_key)
+    constants = constant_normal.sample(n_nll_gamma_samples, seed=new_key)
     new_key, key = jax.random.split(key)
-    lengthscales = lengthscale_gamma.sample(n_dim * n_bo_gamma_samples, seed=new_key)
+    lengthscales = lengthscale_gamma.sample(n_dim * n_nll_gamma_samples, seed=new_key)
     new_key, key = jax.random.split(key)
-    signal_variances = signal_variance_gamma.sample(n_bo_gamma_samples, seed=new_key)
+    signal_variances = signal_variance_gamma.sample(n_nll_gamma_samples, seed=new_key)
     new_key, key = jax.random.split(key)
-    noise_variances = noise_variance_gamma.sample(n_bo_gamma_samples, seed=new_key)
+    noise_variances = noise_variance_gamma.sample(n_nll_gamma_samples, seed=new_key)
 
     time_1 = time.time()
 
