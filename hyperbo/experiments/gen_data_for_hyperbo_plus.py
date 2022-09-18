@@ -23,6 +23,8 @@ import datetime
 import argparse
 import math
 from tensorflow_probability.substrates.jax.distributions import Normal, Gamma
+import matplotlib.pyplot as plt
+
 
 DEFAULT_WARP_FUNC = utils.DEFAULT_WARP_FUNC
 GPParams = defs.GPParams
@@ -62,14 +64,35 @@ if __name__ == '__main__':
     cov_func = kernel_list[0][1]
 
     const_params = [1, 1]
-    ls_params = [1, 2]
+    ls_params = [2, 20]
     sig_var_params = [1, 1]
     noise_var_params = [1, 10000]
 
-    dataset = data.hyperbo_plus_gen_synthetic(key, n_search_space, n_funcs, n_func_dims, n_discrete_points, cov_func, const_params,
-                                              ls_params, sig_var_params, noise_var_params, const_prior='normal', ls_prior='gamma',
-                                              sig_var_prior='gamma', noise_var_prior='gamma')
+    dataset, gp_params = data.hyperbo_plus_gen_synthetic(key, n_search_space, n_funcs, n_func_dims, n_discrete_points, cov_func, const_params,
+                                                         ls_params, sig_var_params, noise_var_params, const_prior='normal', ls_prior='gamma',
+                                                         sig_var_prior='gamma', noise_var_prior='gamma')
 
-    np.save('./synthetic_data/dataset_0.npy', dataset)
+    # visualize example gps in 1 dimension
+    length_scales = gp_params[1]
+    mean_func = mean.constant
+    print('length_scales:', length_scales)
+    for length_scale in length_scales[:5]:
+        params_i = defs.GPParams(
+            model={
+                'constant': 0.0,
+                'lengthscale': length_scale,
+                'signal_variance': 1.0,
+                'noise_variance': 1e-6
+        })
+        key, _ = jax.random.split(key)
+        vx = jnp.expand_dims(jnp.arange(0, 1, 0.01), axis=1)
+        key, _ = jax.random.split(key)
+        vy = gp.sample_from_gp(key, mean_func, cov_func, params_i, vx, num_samples=5)
+        for i in range(5):
+            plt.plot(vx, vy[:, i])
+        plt.title('length_scale: {}'.format(length_scale))
+        plt.show()
+
+    np.save('./synthetic_data/dataset_1.npy', dataset)
     print('dataset saved')
 

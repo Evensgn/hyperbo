@@ -648,7 +648,7 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
             f.write('train_id = {}\n'.format(train_id))
             f.write('nll_logs = {}\n'.format(results_a['fit_gp_params'][train_id]['nll_logs']))
             f.write('\n')
-        f.write('gp_distribution_params = {}\n'.format(gp_distribution_params))
+        f.write('gp_distribution_params = {}\n'.format(results_a['gp_distribution_params']))
         f.write('\n')
 
         for test_id in test_id_list:
@@ -673,7 +673,7 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
             f.write('train_id = {}\n'.format(train_id))
             f.write('nll_logs = {}\n'.format(results_b['fit_gp_params'][train_id]['nll_logs']))
             f.write('\n')
-        f.write('gp_distribution_params = {}\n'.format(gp_distribution_params))
+        f.write('gp_distribution_params = {}\n'.format(results_b['gp_distribution_params']))
         f.write('\n')
 
         for test_id in setup_b_id_list:
@@ -719,7 +719,7 @@ kernel_list = [
 
     # ('squared_exponential kl', kernel.squared_exponential, obj.kl, 'lbfgs'),
     # ('matern32 kl', kernel.matern32, obj.kl, 'lbfgs'),
-    # ('matern52 kl', kernel.matern52, obj.kl, 'lbfgs'),
+    # ('matern52 kl', kerne.matern52, obj.kl, 'lbfgs'),
     # ('matern32_mlp kl', kernel.matern32_mlp, obj.kl, 'lbfgs'),
     # ('matern52_mlp kl', kernel.matern52_mlp, obj.kl, 'lbfgs'),
     # ('squared_exponential_mlp kl', kernel.squared_exponential_mlp, obj.kl, 'lbfgs'),
@@ -730,6 +730,7 @@ kernel_list = [
 
 
 if __name__ == '__main__':
+    '''
     # train_id_list = ['5860', '5906']
     # test_id_list = ['5889']
     # train_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767']
@@ -739,8 +740,8 @@ if __name__ == '__main__':
     setup_b_id_list = ['4796', '5860', '5906', '7607', '7609', '5889']
     dataset_func_combined = data.hpob_dataset_v2
     dataset_func_split = data.hpob_dataset_v3
-
     '''
+
     train_id_list = list(range(16))
     test_id_list = list(range(16, 20))
     setup_b_id_list = list(range(20))
@@ -749,11 +750,9 @@ if __name__ == '__main__':
     # setup_b_id_list = [0, 1, 2]
     dataset_func_combined = data.hyperbo_plus_synthetic_dataset_combined
     dataset_func_split = data.hyperbo_plus_synthetic_dataset_split
-    '''
-
 
     n_workers = 96
-    budget = 50
+    budget = 100
     n_bo_runs = 1
     gp_fit_maxiter = 100
     n_bo_gamma_samples = 500
@@ -761,7 +760,7 @@ if __name__ == '__main__':
     key = jax.random.PRNGKey(0)
 
     for kernel_type in kernel_list:
-        for ac_func_type in ['ucb']:
+        for ac_func_type in ['ucb', 'ei', 'pi']:
             new_key, key = jax.random.split(key)
             run(new_key, dataset_func_combined, dataset_func_split, train_id_list, test_id_list, setup_b_id_list,
                 n_workers, kernel_type[0], kernel_type[1], kernel_type[2],

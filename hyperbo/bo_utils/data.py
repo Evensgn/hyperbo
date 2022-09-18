@@ -764,10 +764,10 @@ def hyperbo_plus_gen_synthetic(key, n_search_space, n_funcs, n_func_dims, n_disc
     new_key, key = jax.random.split(key)
     synthetic_data = generate_synthetic_data(key, n_search_space, cov_func, constants, ls, sig_vars, noise_vars, n_funcs,
                                              n_func_dims, n_discrete_points)
-    return synthetic_data
+    return synthetic_data, (constants, ls, sig_vars, noise_vars)
 
 
-synthetic_data_path = './synthetic_data/dataset_0.npy'
+synthetic_data_path = './synthetic_data/dataset_1.npy'
 
 
 def hyperbo_plus_synthetic_dataset_combined(search_space_index):
