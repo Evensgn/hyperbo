@@ -57,16 +57,19 @@ kernel_list = [
 
 if __name__ == '__main__':
     key = jax.random.PRNGKey(0)
+
+    dataset_id = '4'
     n_search_space = 20
     n_funcs = [10 for i in range(n_search_space)]
     n_func_dims = list(np.random.randint(low=2, high=6, size=n_search_space))
     n_discrete_points = [300 for i in range(n_search_space)]
     cov_func = kernel_list[0][1]
+    cov_func_name = kernel_list[0][0]
 
     const_params = [1, 1]
-    ls_params = [2, 20]
-    sig_var_params = [2, 1]
-    noise_var_params = [1, 100000]
+    ls_params = [10, 30]
+    sig_var_params = [1, 1]
+    noise_var_params = [10, 100000]
 
     dataset, gp_params = data.hyperbo_plus_gen_synthetic(key, n_search_space, n_funcs, n_func_dims, n_discrete_points, cov_func, const_params,
                                                          ls_params, sig_var_params, noise_var_params, const_prior='normal', ls_prior='gamma',
@@ -76,6 +79,7 @@ if __name__ == '__main__':
     length_scales = gp_params[1]
     mean_func = mean.constant
     print('length_scales:', length_scales)
+    print('noise_vars:', gp_params[3])
     for length_scale in length_scales[:5]:
         params_i = defs.GPParams(
             model={
@@ -93,6 +97,18 @@ if __name__ == '__main__':
         plt.title('length_scale: {}'.format(length_scale))
         plt.show()
 
-    np.save('./synthetic_data/dataset_1.npy', dataset)
+    np.save('./synthetic_data/dataset_{}.npy'.format(dataset_id), dataset)
+
+    with open(os.path.join('./synthetic_data/dataset_{}.txt'.format(dataset_id)), 'w') as f:
+        f.write('n_search_space: {}\n'.format(n_search_space))
+        f.write('n_funcs: {}\n'.format(n_funcs))
+        f.write('n_func_dims: {}\n'.format(n_func_dims))
+        f.write('n_discrete_points: {}\n'.format(n_discrete_points))
+        f.write('cov_func_name: {}\n'.format(cov_func_name))
+        f.write('const_params: {}\n'.format(const_params))
+        f.write('ls_params: {}\n'.format(ls_params))
+        f.write('sig_var_params: {}\n'.format(sig_var_params))
+        f.write('noise_var_params: {}\n'.format(noise_var_params))
+
     print('dataset saved')
 

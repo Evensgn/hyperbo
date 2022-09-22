@@ -23,6 +23,7 @@ import datetime
 import argparse
 import math
 from tensorflow_probability.substrates.jax.distributions import Normal, Gamma
+from functools import partial
 
 
 DEFAULT_WARP_FUNC = utils.DEFAULT_WARP_FUNC
@@ -313,7 +314,28 @@ def test_bo(key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples,
            gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list
 
 
-def hierarchical_gp_nll(key, dataset, cov_func, n_dim, n_nll_gamma_samples, gp_distribution_params):
+def nll_on_dataset(gp_params, mean_func, cov_func, dataset):
+    return obj.nll(
+        mean_func,
+        cov_func,
+        gp_params,
+        dataset,
+        warp_func=None,
+        exclude_aligned=True
+    )
+
+
+def gp_nll_sub_dataset_level(dataset, cov_func, gp_params):
+    mean_func = mean.constant
+    nll_loss_list = []
+    for sub_dataset in dataset.values():
+        nll_i = nll_on_dataset(gp_params, mean_func, cov_func, {'only': sub_dataset})
+        nll_loss_list.append(nll_i)
+    nll_loss = jnp.mean(jnp.array(nll_loss_list))
+    return nll_loss
+
+
+def hierarchical_gp_nll(key, dataset, cov_func, n_dim, n_nll_gamma_samples, gp_distribution_params, sub_dataset_level=False):
     mean_func = mean.constant
     # sample gp params first
     time_0 = time.time()
@@ -338,30 +360,44 @@ def hierarchical_gp_nll(key, dataset, cov_func, n_dim, n_nll_gamma_samples, gp_d
 
     time_1 = time.time()
 
-    # calculate nll on each sampled gp_params
-    def nll_on_dataset(gp_params, mean_func, cov_func, dataset):
-        return obj.nll(
-            mean_func,
-            cov_func,
-            gp_params,
-            dataset,
-            warp_func=None,
-            exclude_aligned=True
-        )
-
-    objectives = []
-    for i in range(n_nll_gamma_samples):
-        params_sample = defs.GPParams(
-            model={
-                'constant': constants[i],
-                'lengthscale': lengthscales[i*n_dim:(i+1)*n_dim],
-                'signal_variance': signal_variances[i],
-                'noise_variance': noise_variances[i]
-            }
-        )
-        objectives.append(nll_on_dataset(params_sample, mean_func, cov_func, dataset))
-    objectives = jnp.array(objectives)
-    nll_loss = -(jax.scipy.special.logsumexp(-objectives, axis=0) - jnp.log(n_nll_gamma_samples))
+    if sub_dataset_level:
+        nll_loss_list = []
+        for sub_dataset in dataset.values():
+            objectives = []
+            for i in range(n_nll_gamma_samples):
+                params_sample = defs.GPParams(
+                    model={
+                        'constant': constants[i],
+                        'lengthscale': lengthscales[i * n_dim:(i + 1) * n_dim],
+                        'signal_variance': signal_variances[i],
+                        'noise_variance': noise_variances[i]
+                    }
+                )
+                nll_i = nll_on_dataset(params_sample, mean_func, cov_func, {'only': sub_dataset})
+                if not jnp.isnan(nll_i):
+                    objectives.append(nll_i)
+            n_samples_used = len(objectives)
+            objectives = jnp.array(objectives)
+            nll_loss_sub_dataset = -(jax.scipy.special.logsumexp(-objectives, axis=0) - jnp.log(n_samples_used))
+            nll_loss_list.append(nll_loss_sub_dataset)
+        nll_loss = jnp.mean(jnp.array(nll_loss_list))
+    else:
+        objectives = []
+        for i in range(n_nll_gamma_samples):
+            params_sample = defs.GPParams(
+                model={
+                    'constant': constants[i],
+                    'lengthscale': lengthscales[i*n_dim:(i+1)*n_dim],
+                    'signal_variance': signal_variances[i],
+                    'noise_variance': noise_variances[i]
+                }
+            )
+            nll_i = nll_on_dataset(params_sample, mean_func, cov_func, dataset)
+            if not jnp.isnan(nll_i):
+                objectives.append(nll_i)
+        n_samples_used = len(objectives)
+        objectives = jnp.array(objectives)
+        nll_loss = -(jax.scipy.special.logsumexp(-objectives, axis=0) - jnp.log(n_samples_used))
 
     time_2 = time.time()
     print('time for sampling gp params: {}'.format(time_1 - time_0))
@@ -436,9 +472,9 @@ def fit_gp_params(key, dataset, cov_func, objective, opt_method, gp_fit_maxiter)
     return retrieved_inferred_params, nll_logs
 
 
-def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_list, setup_b_id_list,
+def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_list, test_id_list, setup_b_id_list,
         n_workers, kernel_name, cov_func, objective, opt_method, budget, n_bo_runs, n_bo_gamma_samples,
-        ac_func_type, gp_fit_maxiter, fixed_gp_distribution_params, n_nll_gamma_samples):
+        ac_func_type, gp_fit_maxiter, fixed_gp_distribution_params, n_nll_gamma_samples, setup_a_nll_sub_dataset_level):
     experiment_name = 'test_hyperbo_plus_{}'.format(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
 
     if ac_func_type == 'ucb':
@@ -455,6 +491,7 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
     results = {}
 
     results['experiment_name'] = experiment_name
+    results['extra_info'] = extra_info
     results['train_id_list'] = train_id_list
     results['test_id_list'] = test_id_list
     results['setup_b_id_list'] = setup_b_id_list
@@ -469,6 +506,7 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
     results['gp_fit_maxiter'] = gp_fit_maxiter
     results['fixed_gp_distribution_params'] = fixed_gp_distribution_params
     results['n_nll_gamma_samples'] = n_nll_gamma_samples
+    results['setup_a_nll_sub_dataset_level'] = setup_a_nll_sub_dataset_level
 
     pool = ProcessingPool(nodes=n_workers)
 
@@ -504,7 +542,7 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
 
     results_a['gp_distribution_params'] = gp_distribution_params
 
-    # run BO
+    # run BO and compute NLL
     results_a['bo_results'] = {}
     fixed_regrets_mean_list = []
     fixed_regrets_std_list = []
@@ -516,12 +554,14 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
     gamma_regrets_std_list = []
     gamma_regrets_all_list = []
 
-    fixed_nll = 0.
-    gamma_nll = 0.
+    fixed_nll_on_test_list = []
+    gamma_nll_on_test_list = []
     for test_id in test_id_list:
         print('test_id = {}'.format(test_id))
         dataset = dataset_func_combined(test_id)
         print('Dataset loaded')
+
+        '''
         time_0 = time.time()
         new_key, key = jax.random.split(key)
         fixed_regrets_mean, fixed_regrets_std, fixed_regrets_list, \
@@ -558,17 +598,52 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
         gamma_regrets_all_list.append(gamma_regrets_list)
         time_1 = time.time()
         print('Time elapsed for running bo on test_id {}: {}'.format(test_id, time_1 - time_0))
+        '''
 
         # compute nll
         n_dim = list(dataset.values())[0].x.shape[1]
         new_key, key = jax.random.split(key)
-        fixed_nll += hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples, fixed_gp_distribution_params)
+        fixed_nll_on_test_i = hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
+                                                  fixed_gp_distribution_params,
+                                                  sub_dataset_level=setup_a_nll_sub_dataset_level)
+        fixed_nll_on_test_list.append(fixed_nll_on_test_i)
         new_key, key = jax.random.split(key)
-        gamma_nll += hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples, gp_distribution_params)
+        gamma_nll_on_test_i = hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
+                                                  gp_distribution_params,
+                                                  sub_dataset_level=setup_a_nll_sub_dataset_level)
+        gamma_nll_on_test_list.append(gamma_nll_on_test_i)
 
-    print('fixed_nll = {}'.format(fixed_nll))
-    print('gamma_nll = {}'.format(gamma_nll))
+    fixed_nll_on_train_list = []
+    gamma_nll_on_train_list = []
+    for train_id in test_id_list:
+        print('NLL computation train_id = {}'.format(train_id))
+        dataset = dataset_func_combined(train_id)
+        print('Dataset loaded')
 
+        # compute nll
+        n_dim = list(dataset.values())[0].x.shape[1]
+        new_key, key = jax.random.split(key)
+        fixed_nll_on_train_i = hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
+                                                   fixed_gp_distribution_params,
+                                                   sub_dataset_level=setup_a_nll_sub_dataset_level)
+        fixed_nll_on_train_list.append(fixed_nll_on_train_i)
+        new_key, key = jax.random.split(key)
+        gamma_nll_on_train_i = hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
+                                                   gp_distribution_params,
+                                                   sub_dataset_level=setup_a_nll_sub_dataset_level)
+        gamma_nll_on_train_list.append(gamma_nll_on_train_i)
+
+    fixed_nll_on_test = np.mean(fixed_nll_on_test_list)
+    gamma_nll_on_test = np.mean(gamma_nll_on_test_list)
+    fixed_nll_on_train = np.mean(fixed_nll_on_train_list)
+    gamma_nll_on_train = np.mean(gamma_nll_on_train_list)
+
+    print('fixed_nll_on_test = {}'.format(fixed_nll_on_test))
+    print('gamma_nll_on_test = {}'.format(gamma_nll_on_test))
+    print('fixed_nll_on_train = {}'.format(fixed_nll_on_train))
+    print('gamma_nll_on_train = {}'.format(gamma_nll_on_train))
+
+    '''
     fixed_regrets_all_list = jnp.concatenate(fixed_regrets_all_list, axis=0)
     fixed_regrets_mean_total = jnp.mean(fixed_regrets_all_list, axis=0)
     fixed_regrets_std_total = jnp.std(fixed_regrets_all_list, axis=0)
@@ -578,19 +653,25 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
     gamma_regrets_all_list = jnp.concatenate(gamma_regrets_all_list, axis=0)
     gamma_regrets_mean_total = jnp.mean(gamma_regrets_all_list, axis=0)
     gamma_regrets_std_total = jnp.std(gamma_regrets_all_list, axis=0)
+    '''
+
+    '''
+            'fixed_regrets_all_list': fixed_regrets_all_list,
+            'fixed_regrets_mean': fixed_regrets_mean_total,
+            'fixed_regrets_std': fixed_regrets_std_total,
+            'random_regrets_all_list': random_regrets_all_list,
+            'random_regrets_mean': random_regrets_mean_total,
+            'random_regrets_std': random_regrets_std_total,
+            'gamma_regrets_all_list': gamma_regrets_all_list,
+            'gamma_regrets_mean': gamma_regrets_mean_total,
+            'gamma_regrets_std': gamma_regrets_std_total,
+    '''
 
     results_a['bo_results_total'] = {
-        'fixed_regrets_all_list': fixed_regrets_all_list,
-        'fixed_regrets_mean': fixed_regrets_mean_total,
-        'fixed_regrets_std': fixed_regrets_std_total,
-        'random_regrets_all_list': random_regrets_all_list,
-        'random_regrets_mean': random_regrets_mean_total,
-        'random_regrets_std': random_regrets_std_total,
-        'gamma_regrets_all_list': gamma_regrets_all_list,
-        'gamma_regrets_mean': gamma_regrets_mean_total,
-        'gamma_regrets_std': gamma_regrets_std_total,
-        'fixed_nll': fixed_nll,
-        'gamma_nll': gamma_nll
+        'fixed_nll_on_test': fixed_nll_on_test,
+        'gamma_nll_on_test': gamma_nll_on_test,
+        'fixed_nll_on_train': fixed_nll_on_train,
+        'gamma_nll_on_train': gamma_nll_on_train
     }
 
     # setup b
@@ -627,7 +708,7 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
 
     results_b['gp_distribution_params'] = gp_distribution_params
 
-    # run BO
+    # run BO and compute NLL
     results_b['bo_results'] = {}
     fixed_regrets_mean_list = []
     fixed_regrets_std_list = []
@@ -642,12 +723,15 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
     gamma_regrets_std_list = []
     gamma_regrets_all_list = []
 
-    fixed_nll = 0.
-    gamma_nll = 0.
+    fixed_nll_on_test_list = []
+    gamma_nll_on_test_list = []
+    hyperbo_nll_on_test_list = []
     for test_id in setup_b_id_list:
         print('test_id = {}'.format(test_id))
         _, dataset = dataset_func_split(test_id) # only use test set
         print('Dataset loaded')
+
+        '''
         time_0 = time.time()
         new_key, key = jax.random.split(key)
         fixed_regrets_mean, fixed_regrets_std, fixed_regrets_list, \
@@ -692,18 +776,57 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
         gamma_regrets_all_list.append(gamma_regrets_list)
         time_1 = time.time()
         print('Time elapsed for running bo on test_id {}: {}'.format(test_id, time_1 - time_0))
+        '''
 
         # compute nll
         n_dim = list(dataset.values())[0].x.shape[1]
         new_key, key = jax.random.split(key)
-        fixed_nll += hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                         fixed_gp_distribution_params)
+        fixed_nll_on_test_i = hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
+                                                  fixed_gp_distribution_params, sub_dataset_level=True)
+        fixed_nll_on_test_list.append(fixed_nll_on_test_i)
         new_key, key = jax.random.split(key)
-        gamma_nll += hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples, gp_distribution_params)
+        gamma_nll_on_test_i = hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
+                                                  gp_distribution_params, sub_dataset_level=True)
+        gamma_nll_on_test_list.append(gamma_nll_on_test_i)
+        hyperbo_nll_on_test_i = gp_nll_sub_dataset_level(dataset, cov_func, hyperbo_params[test_id])
+        hyperbo_nll_on_test_list.append(hyperbo_nll_on_test_i)
 
-    print('fixed_nll = {}'.format(fixed_nll))
-    print('gamma_nll = {}'.format(gamma_nll))
+    fixed_nll_on_train_list = []
+    gamma_nll_on_train_list = []
+    hyperbo_nll_on_train_list = []
+    for train_id in setup_b_id_list:
+        print('NLL computation train_id = {}'.format(train_id))
+        dataset, _ = dataset_func_split(train_id) # only use train set
+        print('Dataset loaded')
 
+        # compute nll
+        n_dim = list(dataset.values())[0].x.shape[1]
+        new_key, key = jax.random.split(key)
+        fixed_nll_on_train_i = hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
+                                                   fixed_gp_distribution_params, sub_dataset_level=True)
+        fixed_nll_on_train_list.append(fixed_nll_on_train_i)
+        new_key, key = jax.random.split(key)
+        gamma_nll_on_train_i = hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
+                                                   gp_distribution_params, sub_dataset_level=True)
+        gamma_nll_on_train_list.append(gamma_nll_on_train_i)
+        hyperbo_nll_on_train_i = gp_nll_sub_dataset_level(dataset, cov_func, hyperbo_params[train_id])
+        hyperbo_nll_on_train_list.append(hyperbo_nll_on_train_i)
+
+    fixed_nll_on_test = np.mean(fixed_nll_on_test_list)
+    gamma_nll_on_test = np.mean(gamma_nll_on_test_list)
+    hyperbo_nll_on_test = np.mean(hyperbo_nll_on_test_list)
+    fixed_nll_on_train = np.mean(fixed_nll_on_train_list)
+    gamma_nll_on_train = np.mean(gamma_nll_on_train_list)
+    hyperbo_nll_on_train = np.mean(hyperbo_nll_on_train_list)
+
+    print('fixed_nll_on_test = {}'.format(fixed_nll_on_test))
+    print('gamma_nll_on_test = {}'.format(gamma_nll_on_test))
+    print('hyperbo_nll_on_test = {}'.format(hyperbo_nll_on_test))
+    print('fixed_nll_on_train = {}'.format(fixed_nll_on_train))
+    print('gamma_nll_on_train = {}'.format(gamma_nll_on_train))
+    print('hyperbo_nll_on_train = {}'.format(hyperbo_nll_on_train))
+
+    '''
     fixed_regrets_all_list = jnp.concatenate(fixed_regrets_all_list, axis=0)
     fixed_regrets_mean_total = jnp.mean(fixed_regrets_all_list, axis=0)
     fixed_regrets_std_total = jnp.std(fixed_regrets_all_list, axis=0)
@@ -716,22 +839,30 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
     gamma_regrets_all_list = jnp.concatenate(gamma_regrets_all_list, axis=0)
     gamma_regrets_mean_total = jnp.mean(gamma_regrets_all_list, axis=0)
     gamma_regrets_std_total = jnp.std(gamma_regrets_all_list, axis=0)
+    '''
+
+    '''
+            'fixed_regrets_all_list': fixed_regrets_all_list,
+            'fixed_regrets_mean': fixed_regrets_mean_total,
+            'fixed_regrets_std': fixed_regrets_std_total,
+            'hyperbo_regrets_all_list': hyperbo_regrets_all_list,
+            'hyperbo_regrets_mean': hyperbo_regrets_mean_total,
+            'hyperbo_regrets_std': hyperbo_regrets_std_total,
+            'random_regrets_all_list': random_regrets_all_list,
+            'random_regrets_mean': random_regrets_mean_total,
+            'random_regrets_std': random_regrets_std_total,
+            'gamma_regrets_all_list': gamma_regrets_all_list,
+            'gamma_regrets_mean': gamma_regrets_mean_total,
+            'gamma_regrets_std': gamma_regrets_std_total,
+    '''
 
     results_b['bo_results_total'] = {
-        'fixed_regrets_all_list': fixed_regrets_all_list,
-        'fixed_regrets_mean': fixed_regrets_mean_total,
-        'fixed_regrets_std': fixed_regrets_std_total,
-        'hyperbo_regrets_all_list': hyperbo_regrets_all_list,
-        'hyperbo_regrets_mean': hyperbo_regrets_mean_total,
-        'hyperbo_regrets_std': hyperbo_regrets_std_total,
-        'random_regrets_all_list': random_regrets_all_list,
-        'random_regrets_mean': random_regrets_mean_total,
-        'random_regrets_std': random_regrets_std_total,
-        'gamma_regrets_all_list': gamma_regrets_all_list,
-        'gamma_regrets_mean': gamma_regrets_mean_total,
-        'gamma_regrets_std': gamma_regrets_std_total,
-        'fixed_nll': fixed_nll,
-        'gamma_nll': gamma_nll
+        'fixed_nll_on_test': fixed_nll_on_test,
+        'gamma_nll_on_test': gamma_nll_on_test,
+        'hyperbo_nll_on_test': hyperbo_nll_on_test,
+        'fixed_nll_on_train': fixed_nll_on_train,
+        'gamma_nll_on_train': gamma_nll_on_train,
+        'hyperbo_nll_on_train': hyperbo_nll_on_train
     }
 
     # save results
@@ -744,6 +875,7 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
 
     with open(os.path.join(dir_path, 'results.txt'), 'w') as f:
         f.write('experiment_name = {}\n'.format(experiment_name))
+        f.write('extra_info = {}\n'.format(extra_info))
         f.write('train_id_list = {}\n'.format(train_id_list))
         f.write('test_id_list = {}\n'.format(test_id_list))
         f.write('n_workers = {}\n'.format(n_workers))
@@ -763,6 +895,7 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
         f.write('gp_distribution_params = {}\n'.format(results_a['gp_distribution_params']))
         f.write('\n')
 
+        '''
         for test_id in test_id_list:
             f.write('test_id = {}\n'.format(test_id))
             f.write('fixed_regrets_mean = {}\n'.format(results_a['bo_results'][test_id]['fixed_regrets_mean']))
@@ -779,8 +912,11 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
         f.write('random_regrets_std_total = {}\n'.format(results_a['bo_results_total']['random_regrets_std']))
         f.write('gamma_regrets_mean_total = {}\n'.format(results_a['bo_results_total']['gamma_regrets_mean']))
         f.write('gamma_regrets_std_total = {}\n'.format(results_a['bo_results_total']['gamma_regrets_std']))
-        f.write('fixed_nll = {}\n'.format(results_a['bo_results_total']['fixed_nll']))
-        f.write('gamma_nll = {}\n'.format(results_a['bo_results_total']['gamma_nll']))
+        '''
+        f.write('fixed_nll_on_test = {}\n'.format(results_a['bo_results_total']['fixed_nll_on_test']))
+        f.write('gamma_nll_on_test = {}\n'.format(results_a['bo_results_total']['gamma_nll_on_test']))
+        f.write('fixed_nll_on_train = {}\n'.format(results_a['bo_results_total']['fixed_nll_on_train']))
+        f.write('gamma_nll_on_train = {}\n'.format(results_a['bo_results_total']['gamma_nll_on_train']))
 
         f.write('\n\n setup b \n')
         for train_id in setup_b_id_list:
@@ -790,6 +926,7 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
         f.write('gp_distribution_params = {}\n'.format(results_b['gp_distribution_params']))
         f.write('\n')
 
+        '''
         for test_id in setup_b_id_list:
             f.write('test_id = {}\n'.format(test_id))
             f.write('fixed_regrets_mean = {}\n'.format(results_b['bo_results'][test_id]['fixed_regrets_mean']))
@@ -810,11 +947,16 @@ def run(key, dataset_func_combined, dataset_func_split, train_id_list, test_id_l
         f.write('random_regrets_std_total = {}\n'.format(results_b['bo_results_total']['random_regrets_std']))
         f.write('gamma_regrets_mean_total = {}\n'.format(results_b['bo_results_total']['gamma_regrets_mean']))
         f.write('gamma_regrets_std_total = {}\n'.format(results_b['bo_results_total']['gamma_regrets_std']))
-        f.write('fixed_nll = {}\n'.format(results_b['bo_results_total']['fixed_nll']))
-        f.write('gamma_nll = {}\n'.format(results_b['bo_results_total']['gamma_nll']))
+        '''
+        f.write('fixed_nll_on_test = {}\n'.format(results_b['bo_results_total']['fixed_nll_on_test']))
+        f.write('gamma_nll_on_test = {}\n'.format(results_b['bo_results_total']['gamma_nll_on_test']))
+        f.write('hyperbo_nll_on_test = {}\n'.format(results_b['bo_results_total']['hyperbo_nll_on_test']))
+        f.write('fixed_nll_on_train = {}\n'.format(results_b['bo_results_total']['fixed_nll_on_train']))
+        f.write('gamma_nll_on_train = {}\n'.format(results_b['bo_results_total']['gamma_nll_on_train']))
+        f.write('hyperbo_nll_on_train = {}\n'.format(results_b['bo_results_total']['hyperbo_nll_on_train']))
 
     # generate plots
-    plot.plot_hyperbo_plus(results)
+    # plot.plot_hyperbo_plus(results)
 
     print('done.')
 
@@ -864,31 +1006,38 @@ if __name__ == '__main__':
     # train_id_list = [0, 1, 2]
     # test_id_list = [3]
     # setup_b_id_list = [0, 1, 2]
-    dataset_func_combined = data.hyperbo_plus_synthetic_dataset_combined
-    dataset_func_split = data.hyperbo_plus_synthetic_dataset_split
+    synthetic_data_path = './synthetic_data/dataset_4.npy'
+    dataset_func_combined = partial(data.hyperbo_plus_synthetic_dataset_combined, synthetic_data_path)
+    dataset_func_split = partial(data.hyperbo_plus_synthetic_dataset_split, synthetic_data_path)
+    extra_info = 'synthetic_data_path = \'{}\''.format(synthetic_data_path)
 
     n_workers = 96
     budget = 50
     n_bo_runs = 1
     gp_fit_maxiter = 500
     n_bo_gamma_samples = 100
-    n_nll_gamma_samples = 1000
+    # n_nll_gamma_samples = 500
+    n_nll_gamma_samples = 100
+    setup_a_nll_sub_dataset_level = True
 
     fixed_gp_distribution_params = {
         'constant': (0.0, 1.0),
-        'lengthscale': (1.0, 2.0),
-        'signal_variance': (1.0, 1.0),
-        'noise_variance': (1.0, 1000.0)
+        'lengthscale': (1.0, 10.0),
+        'signal_variance': (1.0, 5.0),
+        'noise_variance': (10.0, 100.0)
     }
 
     key = jax.random.PRNGKey(0)
 
     for kernel_type in kernel_list:
-        for ac_func_type in ['ucb', 'ei', 'pi']:
+        # for ac_func_type in ['ucb', 'ei', 'pi']:
+        for ac_func_type in ['ucb']:
             new_key, key = jax.random.split(key)
-            run(new_key, dataset_func_combined, dataset_func_split, train_id_list, test_id_list, setup_b_id_list,
+            run(new_key, extra_info, dataset_func_combined, dataset_func_split, train_id_list, test_id_list,
+                setup_b_id_list,
                 n_workers, kernel_type[0], kernel_type[1], kernel_type[2], kernel_type[3], budget, n_bo_runs,
-                n_bo_gamma_samples, ac_func_type, gp_fit_maxiter, fixed_gp_distribution_params, n_nll_gamma_samples)
+                n_bo_gamma_samples, ac_func_type, gp_fit_maxiter, fixed_gp_distribution_params, n_nll_gamma_samples,
+                setup_a_nll_sub_dataset_level)
 
     print('All done.')
 

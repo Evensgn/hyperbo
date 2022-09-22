@@ -714,8 +714,8 @@ def generate_param_from_prior(key, num_samples, prior_params, prior_type='gamma'
     return thetas
 
 
-def generate_synthetic_data(key, n_search_space, cov_func, constants, ls, sig_vars, noise_vars, n_funcs, n_func_dims,
-                            n_discrete_points):
+def generate_synthetic_data(key, n_search_space, cov_func, constants, ls, sig_vars, noise_vars, n_funcs,
+                            n_func_dims, n_discrete_points):
     # discrete domain of test functions
     all_dataset = {}
 
@@ -750,7 +750,8 @@ def generate_synthetic_data(key, n_search_space, cov_func, constants, ls, sig_va
 
 
 # n_funcs: function # per search space
-def hyperbo_plus_gen_synthetic(key, n_search_space, n_funcs, n_func_dims, n_discrete_points, cov_func, const_params, ls_params, sig_var_params, noise_var_params,
+def hyperbo_plus_gen_synthetic(key, n_search_space, n_funcs, n_func_dims, n_discrete_points, cov_func,
+                               const_params, ls_params, sig_var_params, noise_var_params,
                                const_prior='normal', ls_prior='gamma', sig_var_prior='gamma', noise_var_prior='gamma'):
     new_key, key = jax.random.split(key)
     constants = generate_param_from_prior(new_key, n_search_space, const_params, const_prior)
@@ -762,20 +763,17 @@ def hyperbo_plus_gen_synthetic(key, n_search_space, n_funcs, n_func_dims, n_disc
     noise_vars = generate_param_from_prior(new_key, n_search_space, noise_var_params, noise_var_prior)
 
     new_key, key = jax.random.split(key)
-    synthetic_data = generate_synthetic_data(key, n_search_space, cov_func, constants, ls, sig_vars, noise_vars, n_funcs,
-                                             n_func_dims, n_discrete_points)
+    synthetic_data = generate_synthetic_data(key, n_search_space, cov_func, constants, ls, sig_vars,
+                                             noise_vars, n_funcs, n_func_dims, n_discrete_points)
     return synthetic_data, (constants, ls, sig_vars, noise_vars)
 
 
-synthetic_data_path = './synthetic_data/dataset_1.npy'
-
-
-def hyperbo_plus_synthetic_dataset_combined(search_space_index):
+def hyperbo_plus_synthetic_dataset_combined(synthetic_data_path, search_space_index):
     dataset_all = np.load(synthetic_data_path, allow_pickle=True).item()
     return dataset_all[search_space_index]
 
 
-def hyperbo_plus_synthetic_dataset_split(search_space_index):
+def hyperbo_plus_synthetic_dataset_split(synthetic_data_path, search_space_index):
     dataset_all = np.load(synthetic_data_path, allow_pickle=True).item()
     dataset_i = dataset_all[search_space_index]
     train_subdatasets = {}
