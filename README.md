@@ -1,3 +1,13 @@
+This repo is built based on the codebase of [HyperBO](https://github.com/google-research/hyperbo). We made several modifications to some original files to expand its utility and added new files under the `hyperbo/experiments` folder.
+
+## Usage of HyperBO+
+- Synthetic data generation: see `python3 hyperbo/experiments/synthetic_data_generation.py`. This script generates synthetic data for the experiments of HyperBO+. Parameters of data-generation including the save path of the generated file are configured in the script.
+- Run HyperBO+ experiments: see `python3 hyperbo/experiments/run_hyperbo_plus.py`. This script runs the experiments of HyperBO+. Hyper-parameters of the experiments are configured in the script. Set the `synthetic_data_path` to the path of the generated synthetic data file.
+
+The remaining part of this README document is copied from the original repo except from slight modification to the installation instructions.
+
+---
+
 # HyperBO - Prior Discovery
 A Jax/Flax codebase for prior discovery in meta Bayesian optimization.
 The algorithm and analyses can be found in *[Pre-trained Gaussian processes for Bayesian optimization](https://arxiv.org/pdf/2109.08215.pdf)*. Slides are available [at this link](https://ziw.mit.edu/pub/hyperbo_slides.pdf) with [video at the AutoML Seminars](https://www.youtube.com/watch?v=cH4-hHXvO5c). 
@@ -9,12 +19,12 @@ Disclaimer: This is not an officially supported Google product.
 ## Installation
 We recommend using Python 3.7 for stability.
 
-To install the latest development version inside a virtual environment, run
+To install this codebase as a library inside a virtual environment, run
 ```
 python3 -m venv env-pd
 source env-pd/bin/activate
 pip install --upgrade pip
-pip install "git+https://github.com/google-research/hyperbo.git#egg=hyperbo"
+pip install .
 ```
 
 ## Dataset
