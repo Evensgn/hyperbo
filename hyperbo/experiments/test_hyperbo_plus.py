@@ -4,6 +4,7 @@ import time
 
 from hyperbo.basics import definitions as defs
 from hyperbo.basics import params_utils
+from hyperbo.basics import data_utils
 from hyperbo.bo_utils import bayesopt
 from hyperbo.bo_utils import data
 from hyperbo.gp_utils import basis_functions as bf
@@ -24,6 +25,7 @@ import argparse
 import math
 from tensorflow_probability.substrates.jax.distributions import Normal, Gamma
 from functools import partial
+import matplotlib.pyplot as plt
 
 
 DEFAULT_WARP_FUNC = utils.DEFAULT_WARP_FUNC
@@ -210,8 +212,14 @@ def run_bo(run_args):
 
 
 def test_bo(key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func, gp_distribution_params,
-            fixed_gp_distribution_params, hyperbo_params):
+            fixed_gp_distribution_params, hyperbo_params, sub_sample_batch_size):
     n_dim = list(dataset.values())[0].x.shape[1]
+
+    # sub sample each sub dataset for large datasets
+    key, subkey = jax.random.split(key, 2)
+    dataset_iter = data_utils.sub_sample_dataset_iterator(
+        subkey, dataset, sub_sample_batch_size)
+    dataset = next(dataset_iter)
 
     print('sampling gp params')
 
@@ -336,8 +344,16 @@ def gp_nll_sub_dataset_level(dataset, cov_func, gp_params):
     return nll_loss, n_sub_dataset
 
 
-def hierarchical_gp_nll(key, dataset, cov_func, n_dim, n_nll_gamma_samples, gp_distribution_params, sub_dataset_level=False):
+def hierarchical_gp_nll(key, dataset, cov_func, n_dim, n_nll_gamma_samples, gp_distribution_params,
+                        sub_sample_batch_size, sub_dataset_level=False):
     mean_func = mean.constant
+
+    # sub sample each sub dataset for large datasets
+    key, subkey = jax.random.split(key, 2)
+    dataset_iter = data_utils.sub_sample_dataset_iterator(
+        subkey, dataset, sub_sample_batch_size)
+    dataset = next(dataset_iter)
+
     # sample gp params first
     time_0 = time.time()
 
@@ -409,7 +425,7 @@ def hierarchical_gp_nll(key, dataset, cov_func, n_dim, n_nll_gamma_samples, gp_d
     return nll_loss, n_for_sub_dataset_level
 
 
-def fit_gp_params(key, dataset, cov_func, objective, opt_method, gp_fit_maxiter):
+def fit_gp_params(key, dataset, cov_func, objective, opt_method, gp_fit_maxiter, sub_sample_batch_size):
     n_dim = list(dataset.values())[0].x.shape[1]
 
     # minimize nll
@@ -427,7 +443,7 @@ def fit_gp_params(key, dataset, cov_func, objective, opt_method, gp_fit_maxiter)
                 gp_fit_maxiter,
             'logging_interval': 1,
             'objective': objective,
-            'batch_size': 100,
+            'batch_size': sub_sample_batch_size,
             'learning_rate': 0.001,
         })
 
@@ -477,7 +493,8 @@ def fit_gp_params(key, dataset, cov_func, objective, opt_method, gp_fit_maxiter)
 
 def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_list, test_id_list, setup_b_id_list,
         n_workers, kernel_name, cov_func, objective, opt_method, budget, n_bo_runs, n_bo_gamma_samples,
-        ac_func_type, gp_fit_maxiter, fixed_gp_distribution_params, n_nll_gamma_samples, setup_a_nll_sub_dataset_level):
+        ac_func_type, gp_fit_maxiter, fixed_gp_distribution_params, n_nll_gamma_samples, setup_a_nll_sub_dataset_level,
+        sub_sample_batch_size):
     experiment_name = 'test_hyperbo_plus_{}'.format(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
 
     if ac_func_type == 'ucb':
@@ -510,6 +527,7 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
     results['fixed_gp_distribution_params'] = fixed_gp_distribution_params
     results['n_nll_gamma_samples'] = n_nll_gamma_samples
     results['setup_a_nll_sub_dataset_level'] = setup_a_nll_sub_dataset_level
+    results['sub_sample_batch_size'] = sub_sample_batch_size
 
     pool = ProcessingPool(nodes=n_workers)
 
@@ -530,7 +548,8 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         dataset = dataset_func_combined(train_id)
         print('Dataset loaded')
         new_key, key = jax.random.split(key)
-        gp_params, nll_logs = fit_gp_params(new_key, dataset, cov_func, objective, opt_method, gp_fit_maxiter)
+        gp_params, nll_logs = fit_gp_params(new_key, dataset, cov_func, objective, opt_method, gp_fit_maxiter,
+                                            sub_sample_batch_size)
         results_a['fit_gp_params'][train_id] = {'gp_params': gp_params, 'nll_logs': nll_logs}
         constant_list.append(gp_params['constant'])
         lengthscale_list += list(gp_params['lengthscale'])
@@ -542,6 +561,43 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
     gp_distribution_params['lengthscale'] = gamma_param_from_thetas(np.array(lengthscale_list))
     gp_distribution_params['signal_variance'] = gamma_param_from_thetas(np.array(signal_variance_list))
     gp_distribution_params['noise_variance'] = gamma_param_from_thetas(np.array(noise_variance_list))
+
+    # temp code for plotting
+    import scipy.special as sps
+    dir_path = os.path.join('results', experiment_name)
+    if not os.path.exists('results'):
+        os.makedirs('results')
+    if not os.path.exists(dir_path):
+        os.mkdir(dir_path)
+
+    lengthscale_list = np.array(lengthscale_list)
+    fig, ax = plt.subplots(nrows=1, ncols=1)
+    shape, scale = gp_distribution_params['lengthscale'][0], 1.0 / gp_distribution_params['lengthscale'][1]
+    bins = np.linspace(0, lengthscale_list.max(), 100)
+    y = bins ** (shape - 1) * (np.exp(-bins / scale) / (sps.gamma(shape) * scale ** shape))
+    ax.plot(bins, y, linewidth=2, color='r')
+    ax.scatter(lengthscale_list, np.zeros_like(lengthscale_list), marker='x', color='b')
+    fig.savefig(os.path.join(dir_path, 'lengthscale_distribution.pdf'))
+    plt.close(fig)
+    print('shape = {}, scale = {}'.format(shape, scale))
+    print('lengthscale_list = {}'.format(lengthscale_list))
+    input()
+
+    signal_variance_list = np.array(signal_variance_list)
+    fig, ax = plt.subplots(nrows=1, ncols=1)
+    shape, scale = gp_distribution_params['signal_variance'][0], 1.0 / gp_distribution_params['signal_variance'][1]
+    bins = np.linspace(0, signal_variance_list.max(), 100)
+    y = bins ** (shape - 1) * (np.exp(-bins / scale) / (sps.gamma(shape) * scale ** shape))
+    ax.plot(bins, y, linewidth=2, color='r')
+    ax.scatter(signal_variance_list, np.zeros_like(signal_variance_list), marker='x', color='b')
+    fig.savefig(os.path.join(dir_path, 'signal_variance_distribution.pdf'))
+    plt.close(fig)
+    print('shape = {}, scale = {}'.format(shape, scale))
+    print('signal_variance_list = {}'.format(signal_variance_list))
+    input()
+    
+    assert False
+    # temp code end
 
     results_a['gp_distribution_params'] = gp_distribution_params
 
@@ -561,6 +617,7 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
     fixed_n_for_test_sdl_total = 0
     gamma_nll_on_test_list = []
     gamma_n_for_test_sdl_total = 0
+
     for test_id in test_id_list:
         print('test_id = {}'.format(test_id))
         dataset = dataset_func_combined(test_id)
@@ -573,7 +630,7 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         random_regrets_mean, random_regrets_std, random_regrets_list, \
         gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list = \
             test_bo(new_key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func,
-                    gp_distribution_params, fixed_gp_distribution_params, None)
+                    gp_distribution_params, fixed_gp_distribution_params, None, sub_sample_batch_size)
         results_a['bo_results'][test_id] = {
             'fixed_regrets_mean': fixed_regrets_mean,
             'fixed_regrets_std': fixed_regrets_std,
@@ -608,7 +665,8 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         new_key, key = jax.random.split(key)
         fixed_nll_on_test_i, fixed_n_for_test_sdl = \
             hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                fixed_gp_distribution_params, sub_dataset_level=setup_a_nll_sub_dataset_level)
+                                fixed_gp_distribution_params, sub_sample_batch_size,
+                                sub_dataset_level=setup_a_nll_sub_dataset_level)
         if setup_a_nll_sub_dataset_level:
             fixed_n_for_test_sdl_total += fixed_n_for_test_sdl
             fixed_nll_on_test_list.append(fixed_nll_on_test_i * fixed_n_for_test_sdl)
@@ -617,7 +675,8 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         new_key, key = jax.random.split(key)
         gamma_nll_on_test_i, gamma_n_for_test_sdl = \
             hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                gp_distribution_params, sub_dataset_level=setup_a_nll_sub_dataset_level)
+                                gp_distribution_params, sub_sample_batch_size,
+                                sub_dataset_level=setup_a_nll_sub_dataset_level)
         if setup_a_nll_sub_dataset_level:
             gamma_n_for_test_sdl_total += gamma_n_for_test_sdl
             gamma_nll_on_test_list.append(gamma_nll_on_test_i * gamma_n_for_test_sdl)
@@ -638,7 +697,8 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         new_key, key = jax.random.split(key)
         fixed_nll_on_train_i, fixed_n_for_train_sdl = \
             hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                fixed_gp_distribution_params, sub_dataset_level=setup_a_nll_sub_dataset_level)
+                                fixed_gp_distribution_params, sub_sample_batch_size,
+                                sub_dataset_level=setup_a_nll_sub_dataset_level)
         if setup_a_nll_sub_dataset_level:
             fixed_n_for_train_sdl_total += fixed_n_for_train_sdl
             fixed_nll_on_train_list.append(fixed_nll_on_train_i * fixed_n_for_train_sdl)
@@ -647,7 +707,8 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         new_key, key = jax.random.split(key)
         gamma_nll_on_train_i, gamma_n_for_train_sdl = \
             hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                gp_distribution_params, sub_dataset_level=setup_a_nll_sub_dataset_level)
+                                gp_distribution_params, sub_sample_batch_size,
+                                sub_dataset_level=setup_a_nll_sub_dataset_level)
         if setup_a_nll_sub_dataset_level:
             gamma_n_for_train_sdl_total += gamma_n_for_train_sdl
             gamma_nll_on_train_list.append(gamma_nll_on_train_i * gamma_n_for_train_sdl)
@@ -714,7 +775,8 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         dataset, _ = dataset_func_split(train_id) # only use training set
         print('Dataset loaded')
         new_key, key = jax.random.split(key)
-        gp_params, nll_logs = fit_gp_params(new_key, dataset, cov_func, objective, opt_method, gp_fit_maxiter)
+        gp_params, nll_logs = fit_gp_params(new_key, dataset, cov_func, objective, opt_method, gp_fit_maxiter,
+                                            sub_sample_batch_size)
         results_b['fit_gp_params'][train_id] = {'gp_params': gp_params, 'nll_logs': nll_logs}
         constant_list.append(gp_params['constant'])
         lengthscale_list += list(gp_params['lengthscale'])
@@ -763,7 +825,8 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         random_regrets_mean, random_regrets_std, random_regrets_list, \
         gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list = \
             test_bo(new_key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func,
-                    gp_distribution_params, fixed_gp_distribution_params, hyperbo_params[test_id])
+                    gp_distribution_params, fixed_gp_distribution_params, hyperbo_params[test_id],
+                    sub_sample_batch_size)
         results_b['bo_results'][test_id] = {
             'fixed_regrets_mean': fixed_regrets_mean,
             'fixed_regrets_std': fixed_regrets_std,
@@ -807,13 +870,13 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         new_key, key = jax.random.split(key)
         fixed_nll_on_test_i, fixed_n_for_test_sdl = \
             hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                fixed_gp_distribution_params, sub_dataset_level=True)
+                                fixed_gp_distribution_params, sub_sample_batch_size, sub_dataset_level=True)
         fixed_n_for_test_sdl_total += fixed_n_for_test_sdl
         fixed_nll_on_test_list.append(fixed_nll_on_test_i * fixed_n_for_test_sdl)
         new_key, key = jax.random.split(key)
         gamma_nll_on_test_i, gamma_n_for_test_sdl = \
             hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                gp_distribution_params, sub_dataset_level=True)
+                                gp_distribution_params, sub_sample_batch_size, sub_dataset_level=True)
         gamma_n_for_test_sdl_total += gamma_n_for_test_sdl
         gamma_nll_on_test_list.append(gamma_nll_on_test_i * gamma_n_for_test_sdl)
         hyperbo_nll_on_test_i, hyperbo_n_for_test_sdl = \
@@ -837,13 +900,13 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         new_key, key = jax.random.split(key)
         fixed_nll_on_train_i, fixed_n_for_train_sdl = \
             hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                fixed_gp_distribution_params, sub_dataset_level=True)
+                                fixed_gp_distribution_params, sub_sample_batch_size, sub_dataset_level=True)
         fixed_n_for_train_sdl_total += fixed_n_for_train_sdl
         fixed_nll_on_train_list.append(fixed_nll_on_train_i * fixed_n_for_train_sdl)
         new_key, key = jax.random.split(key)
         gamma_nll_on_train_i, gamma_n_for_train_sdl = \
             hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                gp_distribution_params, sub_dataset_level=True)
+                                gp_distribution_params, sub_sample_batch_size, sub_dataset_level=True)
         gamma_n_for_train_sdl_total += gamma_n_for_train_sdl
         gamma_nll_on_train_list.append(gamma_nll_on_train_i * gamma_n_for_train_sdl)
         hyperbo_nll_on_train_i, hyperbo_n_for_train_sdl = \
@@ -924,6 +987,7 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         f.write('n_bo_gamma_samples = {}\n'.format(n_bo_gamma_samples))
         f.write('n_nll_gamma_samples = {}\n'.format(n_nll_gamma_samples))
         f.write('setup_a_nll_sub_dataset_level = {}\n'.format(setup_a_nll_sub_dataset_level))
+        f.write('sub_sample_batch_size = {}\n'.format(sub_sample_batch_size))
 
         f.write('\n')
         for train_id in train_id_list:
@@ -1024,36 +1088,48 @@ kernel_list = [
 
 
 if __name__ == '__main__':
-    '''
     # train_id_list = ['5860', '5906']
     # test_id_list = ['5889']
     # train_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767']
-    # train_id_list = ['6766', '4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6767', '6794']
-    train_id_list = ['4796', '5527', '5636', '5859', '5891', '5965', '5970', '5971', '6766', '6767', '6794', '7607', '7609']
-    test_id_list = ['5860', '5906', '5889']
-    setup_b_id_list = ['4796', '5860', '5906', '7607', '7609', '5889']
+    # train_id_list = ['6766', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6767', '6794']
+    # train_id_list = ['4796', '5527', '5636', '5859', '5891', '5965', '5970', '5971', '6766', '6767', '6794', '7607', '7609']
+    # train_id_list = ['4796', '5527', '5636']
+    # test_id_list = ['4796', '5860', '5906', '7607', '7609', '5889']
+    # test_id_list = ['5860', '5906', '5889']
+    # setup_b_id_list = ['4796', '5860', '5906', '7607', '7609', '5889']
+    # setup_b_id_list = ['5860', '5906', '5889']
+
+    train_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767']
+    # test_id_list = ['6794', '7607', '7609', '5889']
+    # setup_b_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767',
+    #                    '6794', '7607', '7609', '5889']
+
+    # train_id_list = ['4796', '5527', '5636', '5859', '5860']
+    test_id_list = ['6794', '7607']
+    setup_b_id_list = ['4796', '5527', '5636', '5859', '5860']
+
     dataset_func_combined = data.hpob_dataset_v2
     dataset_func_split = data.hpob_dataset_v3
-    '''
+    extra_info = ''
 
+    '''
     train_id_list = list(range(16))
     test_id_list = list(range(16, 20))
     setup_b_id_list = list(range(20))
-    # train_id_list = [0, 1, 2]
-    # test_id_list = [3]
-    # setup_b_id_list = [0, 1, 2]
     synthetic_data_path = './synthetic_data/dataset_4.npy'
     dataset_func_combined = partial(data.hyperbo_plus_synthetic_dataset_combined, synthetic_data_path)
     dataset_func_split = partial(data.hyperbo_plus_synthetic_dataset_split, synthetic_data_path)
     extra_info = 'synthetic_data_path = \'{}\''.format(synthetic_data_path)
+    '''
 
     n_workers = 96
-    budget = 50
+    budget = 50 # 50
     n_bo_runs = 1
-    gp_fit_maxiter = 500
-    n_bo_gamma_samples = 100
-    n_nll_gamma_samples = 500
+    gp_fit_maxiter = 10 # 500
+    n_bo_gamma_samples = 100 # 100
+    n_nll_gamma_samples = 500 # 500
     setup_a_nll_sub_dataset_level = True
+    sub_sample_batch_size = 100
 
     fixed_gp_distribution_params = {
         'constant': (0.0, 1.0),
@@ -1071,7 +1147,7 @@ if __name__ == '__main__':
                 setup_b_id_list,
                 n_workers, kernel_type[0], kernel_type[1], kernel_type[2], kernel_type[3], budget, n_bo_runs,
                 n_bo_gamma_samples, ac_func_type, gp_fit_maxiter, fixed_gp_distribution_params, n_nll_gamma_samples,
-                setup_a_nll_sub_dataset_level)
+                setup_a_nll_sub_dataset_level, sub_sample_batch_size)
 
     print('All done.')
 

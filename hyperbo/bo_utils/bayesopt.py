@@ -164,8 +164,9 @@ def simulated_bayesopt_with_gp_params_samples(key,
 
   for i in range(iters):
     # print(f'iter {i}')
-    evals_list = []
 
+    '''
+    evals_list = []
     for j in range(n_bo_gp_params_samples):
         params_sample = defs.GPParams(
             model={
@@ -192,9 +193,46 @@ def simulated_bayesopt_with_gp_params_samples(key,
         # P(dataset | theta)
         evals *= p_dataset_theta
         evals_list.append(evals)
+    '''
+
+    def new_acfun(params_j):
+        params_sample = defs.GPParams(
+            model={
+                'constant': params_j[0],
+                'lengthscale': params_j[1:n_dim+1],
+                'signal_variance': params_j[n_dim+1],
+                'noise_variance': params_j[n_dim+2]
+            }
+        )
+        # set params
+        model.params = params_sample
+        evals = ac_func(
+            model=model,
+            sub_dataset_key=sub_dataset_key,
+            x_queries=queried_sub_dataset.x)
+        p_dataset_theta = jnp.exp(-obj.neg_log_marginal_likelihood(
+            mean_func=model.mean_func,
+            cov_func=model.cov_func,
+            params=params_sample,
+            dataset=model.dataset,  # there is only one sub_dataset which is the active observation list
+            warp_func=None
+        ))
+
+        # P(dataset | theta)
+        evals *= p_dataset_theta
+        return evals
+
+    params_j_list = []
+    for j in range(n_bo_gp_params_samples):
+        constant_j = constants[i * n_bo_gp_params_samples + j:i * n_bo_gp_params_samples + j + 1]
+        lengthscale_j = lengthscales[i * n_bo_gp_params_samples * n_dim + j * n_dim:i * n_bo_gp_params_samples *
+                                     n_dim + (j + 1) * n_dim]
+        signal_variance_j = signal_variances[i * n_bo_gp_params_samples + j:i * n_bo_gp_params_samples + j + 1]
+        noise_variance_j = noise_variances[i * n_bo_gp_params_samples + j:i * n_bo_gp_params_samples + j + 1]
+        params_j_list.append(jnp.concatenate((constant_j, lengthscale_j, signal_variance_j, noise_variance_j)))
+    evals_list = list(jax.vmap(new_acfun)(jnp.array(params_j_list)))
 
     # print('evals done')
-
     evals = jnp.mean(jnp.stack(evals_list), axis=0)
     select_idx = evals.argmax()
     eval_datapoint = queried_sub_dataset.x[select_idx], queried_sub_dataset.y[
