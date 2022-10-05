@@ -590,45 +590,6 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
     gp_distribution_params['signal_variance'] = gamma_param_from_thetas(np.array(signal_variance_list))
     gp_distribution_params['noise_variance'] = gamma_param_from_thetas(np.array(noise_variance_list))
 
-    '''
-    # temp code for plotting
-    import scipy.special as sps
-    dir_path = os.path.join('results', experiment_name)
-    if not os.path.exists('results'):
-        os.makedirs('results')
-    if not os.path.exists(dir_path):
-        os.mkdir(dir_path)
-
-    lengthscale_list = np.array(lengthscale_list)
-    fig, ax = plt.subplots(nrows=1, ncols=1)
-    shape, scale = gp_distribution_params['lengthscale'][0], 1.0 / gp_distribution_params['lengthscale'][1]
-    bins = np.linspace(0, lengthscale_list.max(), 100)
-    y = bins ** (shape - 1) * (np.exp(-bins / scale) / (sps.gamma(shape) * scale ** shape))
-    ax.plot(bins, y, linewidth=2, color='r')
-    ax.scatter(lengthscale_list, np.zeros_like(lengthscale_list), marker='x', color='b')
-    fig.savefig(os.path.join(dir_path, 'lengthscale_distribution.pdf'))
-    plt.close(fig)
-    print('shape = {}, scale = {}'.format(shape, scale))
-    print('lengthscale_list = {}'.format(lengthscale_list))
-    input()
-
-    signal_variance_list = np.array(signal_variance_list)
-    fig, ax = plt.subplots(nrows=1, ncols=1)
-    shape, scale = gp_distribution_params['signal_variance'][0], 1.0 / gp_distribution_params['signal_variance'][1]
-    bins = np.linspace(0, signal_variance_list.max(), 100)
-    y = bins ** (shape - 1) * (np.exp(-bins / scale) / (sps.gamma(shape) * scale ** shape))
-    ax.plot(bins, y, linewidth=2, color='r')
-    ax.scatter(signal_variance_list, np.zeros_like(signal_variance_list), marker='x', color='b')
-    fig.savefig(os.path.join(dir_path, 'signal_variance_distribution.pdf'))
-    plt.close(fig)
-    print('shape = {}, scale = {}'.format(shape, scale))
-    print('signal_variance_list = {}'.format(signal_variance_list))
-    input()
-    
-    assert False
-    # temp code end
-    '''
-
     results_a['gp_distribution_params'] = gp_distribution_params
 
     # run BO and compute NLL
@@ -676,13 +637,13 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
             results_a['bo_results'][ac_func_type][test_id] = {
                 'fixed_regrets_mean': fixed_regrets_mean,
                 'fixed_regrets_std': fixed_regrets_std,
-                'fixed_regrets_list': fixed_regrets_std_list,
+                'fixed_regrets_list': fixed_regrets_list,
                 'random_regrets_mean': random_regrets_mean,
                 'random_regrets_std': random_regrets_std,
                 'random_regrets_list': random_regrets_list,
                 'gamma_regrets_mean': gamma_regrets_mean,
                 'gamma_regrets_std': gamma_regrets_std,
-                'gamma_regrets_list': gamma_regrets_std_list,
+                'gamma_regrets_list': gamma_regrets_list
             }
             print('fixed_regrets_mean = {}'.format(fixed_regrets_mean))
             print('fixed_regrets_std = {}'.format(fixed_regrets_std))
@@ -919,7 +880,7 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
             results_b['bo_results'][ac_func_type][test_id] = {
                 'fixed_regrets_mean': fixed_regrets_mean,
                 'fixed_regrets_std': fixed_regrets_std,
-                'fixed_regrets_list': fixed_regrets_std_list,
+                'fixed_regrets_list': fixed_regrets_list,
                 'hyperbo_regrets_mean': hyperbo_regrets_mean,
                 'hyperbo_regrets_std': hyperbo_regrets_std,
                 'hyperbo_regrets_list': hyperbo_regrets_list,
@@ -928,7 +889,7 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
                 'random_regrets_list': random_regrets_list,
                 'gamma_regrets_mean': gamma_regrets_mean,
                 'gamma_regrets_std': gamma_regrets_std,
-                'gamma_regrets_list': gamma_regrets_std_list,
+                'gamma_regrets_list': gamma_regrets_list,
             }
             print('fixed_regrets_mean = {}'.format(fixed_regrets_mean))
             print('fixed_regrets_std = {}'.format(fixed_regrets_std))
@@ -1268,13 +1229,13 @@ if __name__ == '__main__':
     # test_id_list = ['6794', '7607']
     # setup_b_id_list = ['4796', '5527', '5636', '5859', '5860']
 
-    # dataset_func_combined = data.hpob_dataset_v2
-    # dataset_func_split = data.hpob_dataset_v3
-    # extra_info = ''
-    hpob_converted_data_path = './hpob_converted_data/sub_sample_1000.npy'
-    dataset_func_combined = partial(data.hpob_converted_dataset_combined, hpob_converted_data_path)
-    dataset_func_split = partial(data.hpob_converted_dataset_split, hpob_converted_data_path)
-    extra_info = 'hpob_converted_data_path = \'{}\''.format(hpob_converted_data_path)
+    dataset_func_combined = data.hpob_dataset_v2
+    dataset_func_split = data.hpob_dataset_v3
+    extra_info = ''
+    # hpob_converted_data_path = './hpob_converted_data/sub_sample_1000.npy'
+    # dataset_func_combined = partial(data.hpob_converted_dataset_combined, hpob_converted_data_path)
+    # dataset_func_split = partial(data.hpob_converted_dataset_split, hpob_converted_data_path)
+    # extra_info = 'hpob_converted_data_path = \'{}\''.format(hpob_converted_data_path)
 
     '''
     # train_id_list = [0]
@@ -1314,10 +1275,11 @@ if __name__ == '__main__':
     key = jax.random.PRNGKey(0)
 
     for kernel_type in kernel_list:
+        kernel_name, cov_func, objective, opt_method = kernel_type
         new_key, key = jax.random.split(key)
         run(new_key, extra_info, dataset_func_combined, dataset_func_split, train_id_list, test_id_list,
             setup_b_id_list,
-            n_workers, kernel_type[0], kernel_type[1], kernel_type[2], kernel_type[3], budget, n_bo_runs,
+            n_workers, kernel_name, cov_func, objective, opt_method, budget, n_bo_runs,
             n_bo_gamma_samples, ac_func_type_list, gp_fit_maxiter, fixed_gp_distribution_params, n_nll_gamma_samples,
             setup_a_nll_sub_dataset_level, fit_gp_batch_size, bo_sub_sample_batch_size, adam_learning_rate,
             eval_nll_batch_size, eval_nll_n_batches)

@@ -525,12 +525,241 @@ def fit_gp_params(key, dataset, cov_func, objective, opt_method, gp_fit_maxiter,
     return retrieved_inferred_params, nll_logs
 
 
-def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_list, test_id_list, setup_b_id_list,
-        n_workers, kernel_name, cov_func, objective, opt_method, budget, n_bo_runs, n_bo_gamma_samples,
-        ac_func_type_list, gp_fit_maxiter, fixed_gp_distribution_params, n_nll_gamma_samples, setup_a_nll_sub_dataset_level,
-        fit_gp_batch_size, bo_sub_sample_batch_size, adam_learning_rate, eval_nll_batch_size, eval_nll_n_batches):
-    experiment_name = 'test_hyperbo_plus_{}'.format(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+def split_fit_gp_params_id(dir_path, key, setup, train_id, dataset_func_combined, dataset_func_split,
+                           cov_func, objective, opt_method, gp_fit_maxiter, fit_gp_batch_size, adam_learning_rate):
+    if setup == 'a':
+        dataset = dataset_func_combined(train_id)
+    elif setup == 'b':
+        dataset, _ = dataset_func_split(train_id)  # only use training set
+    else:
+        raise ValueError('setup = {} not supported'.format(setup))
+    new_key, key = jax.random.split(key)
+    gp_params, nll_logs = fit_gp_params(new_key, dataset, cov_func, objective, opt_method, gp_fit_maxiter,
+                                        fit_gp_batch_size, adam_learning_rate)
+    results = {'gp_params': gp_params, 'nll_logs': nll_logs}
+    np.save(os.path.join(dir_path, 'split_fit_gp_params_setup_{}_id_{}.npy'.format(setup, train_id)), results)
 
+
+def split_alpha_mle(dir_path, setup, train_id_list):
+    constant_list = []
+    lengthscale_list = []
+    signal_variance_list = []
+    noise_variance_list = []
+
+    results = {}
+
+    for train_id in train_id_list:
+        gp_params = np.load(os.path.join(dir_path, 'split_fit_gp_params_setup_{}_id_{}.npy'.format(setup, train_id)),
+                            allow_pickle=True).item()['gp_params']
+        constant_list.append(gp_params['constant'])
+        lengthscale_list += list(gp_params['lengthscale'])
+        signal_variance_list.append(gp_params['signal_variance'])
+        noise_variance_list.append(gp_params['noise_variance'])
+
+    gp_distribution_params = {}
+    gp_distribution_params['constant'] = normal_param_from_thetas(np.array(constant_list))
+    gp_distribution_params['lengthscale'] = gamma_param_from_thetas(np.array(lengthscale_list))
+    gp_distribution_params['signal_variance'] = gamma_param_from_thetas(np.array(signal_variance_list))
+    gp_distribution_params['noise_variance'] = gamma_param_from_thetas(np.array(noise_variance_list))
+
+    results['gp_distribution_params'] = gp_distribution_params
+    np.save(os.path.join(dir_path, 'split_alpha_mle_setup_{}.npy'.format(setup)), results)
+
+
+def split_test_bo_setup_a_id(dir_path, key, test_id, dataset_func_combined, cov_func, budget, n_bo_runs,
+                             n_bo_gamma_samples, ac_func_type_list, fixed_gp_distribution_params,
+                             bo_sub_sample_batch_size):
+    results = {}
+
+    # placeholder
+    pool = None
+
+    # read gp_distribution_params
+    gp_distribution_params = np.load(os.path.join(dir_path, 'split_alpha_mle_setup_a.npy'),
+                                     allow_pickle=True).item()['gp_distribution_params']
+
+    for ac_func_type in ac_func_type_list:
+        print('ac_func_type = {}'.format(ac_func_type))
+        if ac_func_type == 'ucb':
+            ac_func = acfun.ucb
+        elif ac_func_type == 'ei':
+            ac_func = acfun.ei
+        elif ac_func_type == 'pi':
+            ac_func = acfun.pi
+        elif ac_func_type == 'rand':
+            ac_func = acfun.rand
+        else:
+            raise ValueError('Unknown ac_func_type: {}'.format(ac_func_type))
+
+        results[ac_func_type] = {}
+
+        dataset = dataset_func_combined(test_id)
+
+        new_key, key = jax.random.split(key)
+        fixed_regrets_mean, fixed_regrets_std, fixed_regrets_list, \
+        _, _, _, \
+        random_regrets_mean, random_regrets_std, random_regrets_list, \
+        gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list = \
+            test_bo(new_key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func,
+                    gp_distribution_params, fixed_gp_distribution_params, None, bo_sub_sample_batch_size)
+        results[ac_func_type][test_id] = {
+            'fixed_regrets_mean': fixed_regrets_mean,
+            'fixed_regrets_std': fixed_regrets_std,
+            'fixed_regrets_list': fixed_regrets_list,
+            'random_regrets_mean': random_regrets_mean,
+            'random_regrets_std': random_regrets_std,
+            'random_regrets_list': random_regrets_list,
+            'gamma_regrets_mean': gamma_regrets_mean,
+            'gamma_regrets_std': gamma_regrets_std,
+            'gamma_regrets_list': gamma_regrets_list,
+        }
+    np.save(os.path.join(dir_path, 'split_test_bo_setup_a_id_{}.npy'.format(test_id)), results)
+
+
+def split_eval_nll_setup_a_id(dir_path, key, id, dataset_func_combined, cov_func,
+                              fixed_gp_distribution_params, n_nll_gamma_samples, setup_a_nll_sub_dataset_level,
+                              eval_nll_batch_size, eval_nll_n_batches):
+    # read gp_distribution_params
+    gp_distribution_params = np.load(os.path.join(dir_path, 'split_alpha_mle_setup_a.npy'),
+                                     allow_pickle=True).item()['gp_distribution_params']
+
+    dataset = dataset_func_combined(id)
+
+    # compute nll
+    n_dim = list(dataset.values())[0].x.shape[1]
+    new_key, key = jax.random.split(key)
+    fixed_nll_on_batches_i, fixed_n_for_sdl = \
+        hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
+                            fixed_gp_distribution_params, eval_nll_batch_size, eval_nll_n_batches,
+                            sub_dataset_level=setup_a_nll_sub_dataset_level)
+    new_key, key = jax.random.split(key)
+    gamma_nll_on_batches_i, gamma_n_for_sdl = \
+        hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
+                            gp_distribution_params, eval_nll_batch_size, eval_nll_n_batches,
+                            sub_dataset_level=setup_a_nll_sub_dataset_level)
+
+    results = {
+        'fixed_nll_on_batches_i': fixed_nll_on_batches_i,
+        'fixed_n_for_sdl': fixed_n_for_sdl,
+        'gamma_nll_on_batches_i': gamma_nll_on_batches_i,
+        'gamma_n_for_sdl': gamma_n_for_sdl,
+    }
+    np.save(os.path.join(dir_path, 'split_eval_nll_setup_a_id_{}.npy'.format(id)), results)
+
+
+def split_test_bo_setup_b_id(dir_path, key, test_id, dataset_func_split, setup_b_id_list, cov_func,
+                             budget, n_bo_runs, n_bo_gamma_samples, ac_func_type_list, fixed_gp_distribution_params,
+                             bo_sub_sample_batch_size):
+    results = {}
+
+    # placeholder
+    pool = None
+
+    # read gp_distribution_params
+    gp_distribution_params = np.load(os.path.join(dir_path, 'split_alpha_mle_setup_b.npy'),
+                                     allow_pickle=True).item()['gp_distribution_params']
+    # read hyperbo params
+    hyperbo_params_test_id = np.load(os.path.join(dir_path, 'split_fit_gp_params_setup_b_id_{}.npy'.format(test_id)),
+                                     allow_pickle=True).item()['gp_params']
+    hyperbo_params_test_id = GPParams(model=hyperbo_params_test_id)
+
+    for ac_func_type in ac_func_type_list:
+        if ac_func_type == 'ucb':
+            ac_func = acfun.ucb
+        elif ac_func_type == 'ei':
+            ac_func = acfun.ei
+        elif ac_func_type == 'pi':
+            ac_func = acfun.pi
+        elif ac_func_type == 'rand':
+            ac_func = acfun.rand
+        else:
+            raise ValueError('Unknown ac_func_type: {}'.format(ac_func_type))
+
+        results[ac_func_type] = {}
+
+        for test_id in setup_b_id_list:
+            _, dataset = dataset_func_split(test_id) # only use test set
+
+            new_key, key = jax.random.split(key)
+            fixed_regrets_mean, fixed_regrets_std, fixed_regrets_list, \
+            hyperbo_regrets_mean, hyperbo_regrets_std, hyperbo_regrets_list, \
+            random_regrets_mean, random_regrets_std, random_regrets_list, \
+            gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list = \
+                test_bo(new_key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func,
+                        gp_distribution_params, fixed_gp_distribution_params, hyperbo_params_test_id,
+                        bo_sub_sample_batch_size)
+            results[ac_func_type] = {
+                'fixed_regrets_mean': fixed_regrets_mean,
+                'fixed_regrets_std': fixed_regrets_std,
+                'fixed_regrets_list': fixed_regrets_list,
+                'hyperbo_regrets_mean': hyperbo_regrets_mean,
+                'hyperbo_regrets_std': hyperbo_regrets_std,
+                'hyperbo_regrets_list': hyperbo_regrets_list,
+                'random_regrets_mean': random_regrets_mean,
+                'random_regrets_std': random_regrets_std,
+                'random_regrets_list': random_regrets_list,
+                'gamma_regrets_mean': gamma_regrets_mean,
+                'gamma_regrets_std': gamma_regrets_std,
+                'gamma_regrets_list': gamma_regrets_list,
+            }
+    np.save(os.path.join(dir_path, 'split_test_bo_setup_b_id_{}.npy'.format(test_id)), results)
+
+
+def split_eval_nll_setup_b_id(dir_path, key, id, train_or_test, dataset_func_split, cov_func,
+                              fixed_gp_distribution_params, n_nll_gamma_samples, eval_nll_batch_size,
+                              eval_nll_n_batches):
+    if train_or_test == 'train':
+        dataset, _ = dataset_func_split(id)  # only use train set
+    elif train_or_test == 'test':
+        _, dataset = dataset_func_split(id)  # only use test set
+    else:
+        raise ValueError('Unknown train_or_test: {}'.format(train_or_test))
+
+    # read gp_distribution_params
+    gp_distribution_params = np.load(os.path.join(dir_path, 'split_alpha_mle_setup_b.npy'),
+                                     allow_pickle=True).item()['gp_distribution_params']
+    # read hyperbo params
+    hyperbo_params_id = \
+        np.load(os.path.join(dir_path, 'split_fit_gp_params_setup_b_id_{}.npy'.format(id)),
+                allow_pickle=True).item()['gp_params']
+    hyperbo_params_id = GPParams(model=hyperbo_params_id)
+
+    # compute nll
+    n_dim = list(dataset.values())[0].x.shape[1]
+    new_key, key = jax.random.split(key)
+    fixed_nll_on_batches_i, fixed_n_for_sdl = \
+        hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
+                            fixed_gp_distribution_params, eval_nll_batch_size, eval_nll_n_batches,
+                            sub_dataset_level=True)
+
+    new_key, key = jax.random.split(key)
+    gamma_nll_on_batches_i, gamma_n_for_sdl = \
+        hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
+                            gp_distribution_params, eval_nll_batch_size, eval_nll_n_batches,
+                            sub_dataset_level=True)
+
+    new_key, key = jax.random.split(key)
+    hyperbo_nll_on_batches_i, hyperbo_n_for_sdl = \
+        gp_nll_sub_dataset_level(new_key, dataset, cov_func, hyperbo_params_id, eval_nll_batch_size,
+                                 eval_nll_n_batches)
+
+    results = {
+        'fixed_nll_on_batches_i': fixed_nll_on_batches_i,
+        'fixed_n_for_sdl': fixed_n_for_sdl,
+        'gamma_nll_on_batches_i': gamma_nll_on_batches_i,
+        'gamma_n_for_sdl': gamma_n_for_sdl,
+        'hyperbo_nll_on_batches_i': hyperbo_nll_on_batches_i,
+        'hyperbo_n_for_sdl': hyperbo_n_for_sdl
+    }
+    np.save(os.path.join(dir_path, 'split_eval_nll_setup_b_{}_id_{}.npy'.format(train_or_test, id)), results)
+
+
+def split_merge(dir_path, key, group_id, extra_info, train_id_list, test_id_list,
+                setup_b_id_list, n_workers, kernel_name, cov_func, objective, opt_method, budget, n_bo_runs,
+                n_bo_gamma_samples, ac_func_type_list, gp_fit_maxiter, fixed_gp_distribution_params,
+                n_nll_gamma_samples, setup_a_nll_sub_dataset_level, fit_gp_batch_size, bo_sub_sample_batch_size,
+                adam_learning_rate, eval_nll_batch_size, eval_nll_n_batches):
+    experiment_name = 'test_hyperbo_plus_split_group_id_{}_merge'.format(group_id)
     results = {}
 
     results['experiment_name'] = experiment_name
@@ -556,98 +785,24 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
     results['eval_nll_batch_size'] = eval_nll_batch_size
     results['eval_nll_n_batches'] = eval_nll_n_batches
 
-    # pool = None
-    pool = ProcessingPool(nodes=n_workers)
-
     # setup a
 
     results['setup_a'] = {}
     results_a = results['setup_a']
 
     # fit gp parameters
-    constant_list = []
-    lengthscale_list = []
-    signal_variance_list = []
-    noise_variance_list = []
 
     results_a['fit_gp_params'] = {}
     for train_id in train_id_list:
-        print('train_id = {}'.format(train_id))
-        dataset = dataset_func_combined(train_id)
-        print('Dataset loaded')
-        new_key, key = jax.random.split(key)
-        gp_params, nll_logs = fit_gp_params(new_key, dataset, cov_func, objective, opt_method, gp_fit_maxiter,
-                                            fit_gp_batch_size, adam_learning_rate)
-        results_a['fit_gp_params'][train_id] = {'gp_params': gp_params, 'nll_logs': nll_logs}
-        constant_list.append(gp_params['constant'])
-        lengthscale_list += list(gp_params['lengthscale'])
-        signal_variance_list.append(gp_params['signal_variance'])
-        noise_variance_list.append(gp_params['noise_variance'])
-    
-    gp_distribution_params = {}
-    gp_distribution_params['constant'] = normal_param_from_thetas(np.array(constant_list))
-    gp_distribution_params['lengthscale'] = gamma_param_from_thetas(np.array(lengthscale_list))
-    gp_distribution_params['signal_variance'] = gamma_param_from_thetas(np.array(signal_variance_list))
-    gp_distribution_params['noise_variance'] = gamma_param_from_thetas(np.array(noise_variance_list))
+        results_a['fit_gp_params'][train_id] = np.load(os.path.join(dir_path, 'split_fit_gp_params_setup_a_id_{}.npy'.format(train_id)), allow_pickle=True).item()
 
-    '''
-    # temp code for plotting
-    import scipy.special as sps
-    dir_path = os.path.join('results', experiment_name)
-    if not os.path.exists('results'):
-        os.makedirs('results')
-    if not os.path.exists(dir_path):
-        os.mkdir(dir_path)
-
-    lengthscale_list = np.array(lengthscale_list)
-    fig, ax = plt.subplots(nrows=1, ncols=1)
-    shape, scale = gp_distribution_params['lengthscale'][0], 1.0 / gp_distribution_params['lengthscale'][1]
-    bins = np.linspace(0, lengthscale_list.max(), 100)
-    y = bins ** (shape - 1) * (np.exp(-bins / scale) / (sps.gamma(shape) * scale ** shape))
-    ax.plot(bins, y, linewidth=2, color='r')
-    ax.scatter(lengthscale_list, np.zeros_like(lengthscale_list), marker='x', color='b')
-    fig.savefig(os.path.join(dir_path, 'lengthscale_distribution.pdf'))
-    plt.close(fig)
-    print('shape = {}, scale = {}'.format(shape, scale))
-    print('lengthscale_list = {}'.format(lengthscale_list))
-    input()
-
-    signal_variance_list = np.array(signal_variance_list)
-    fig, ax = plt.subplots(nrows=1, ncols=1)
-    shape, scale = gp_distribution_params['signal_variance'][0], 1.0 / gp_distribution_params['signal_variance'][1]
-    bins = np.linspace(0, signal_variance_list.max(), 100)
-    y = bins ** (shape - 1) * (np.exp(-bins / scale) / (sps.gamma(shape) * scale ** shape))
-    ax.plot(bins, y, linewidth=2, color='r')
-    ax.scatter(signal_variance_list, np.zeros_like(signal_variance_list), marker='x', color='b')
-    fig.savefig(os.path.join(dir_path, 'signal_variance_distribution.pdf'))
-    plt.close(fig)
-    print('shape = {}, scale = {}'.format(shape, scale))
-    print('signal_variance_list = {}'.format(signal_variance_list))
-    input()
-    
-    assert False
-    # temp code end
-    '''
-
-    results_a['gp_distribution_params'] = gp_distribution_params
+    results_a['gp_distribution_params'] = np.load(os.path.join(dir_path, 'split_alpha_mle_setup_a.npy'), allow_pickle=True).item()['gp_distribution_params']
 
     # run BO and compute NLL
     results_a['bo_results'] = {}
     results_a['bo_results_total'] = {}
 
     for ac_func_type in ac_func_type_list:
-        print('ac_func_type = {}'.format(ac_func_type))
-        if ac_func_type == 'ucb':
-            ac_func = acfun.ucb
-        elif ac_func_type == 'ei':
-            ac_func = acfun.ei
-        elif ac_func_type == 'pi':
-            ac_func = acfun.pi
-        elif ac_func_type == 'rand':
-            ac_func = acfun.rand
-        else:
-            raise ValueError('Unknown ac_func_type: {}'.format(ac_func_type))
-
         results_a['bo_results'][ac_func_type] = {}
 
         fixed_regrets_mean_list = []
@@ -661,35 +816,17 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         gamma_regrets_all_list = []
 
         for test_id in test_id_list:
-            print('test_id = {}'.format(test_id))
-            dataset = dataset_func_combined(test_id)
-            print('Dataset loaded')
+            results_a['bo_results'][ac_func_type][test_id] = np.load(os.path.join(dir_path, 'split_test_bo_setup_a_id_{}.npy'.format(test_id)), allow_pickle=True).item()[ac_func_type]
+            fixed_regrets_mean = results_a['bo_results'][ac_func_type][test_id]['fixed_regrets_mean']
+            fixed_regrets_std = results_a['bo_results'][ac_func_type][test_id]['fixed_regrets_std']
+            fixed_regrets_list = results_a['bo_results'][ac_func_type][test_id]['fixed_regrets_list']
+            random_regrets_mean = results_a['bo_results'][ac_func_type][test_id]['random_regrets_mean']
+            random_regrets_std = results_a['bo_results'][ac_func_type][test_id]['random_regrets_std']
+            random_regrets_list = results_a['bo_results'][ac_func_type][test_id]['random_regrets_list']
+            gamma_regrets_mean = results_a['bo_results'][ac_func_type][test_id]['gamma_regrets_mean']
+            gamma_regrets_std = results_a['bo_results'][ac_func_type][test_id]['gamma_regrets_std']
+            gamma_regrets_list = results_a['bo_results'][ac_func_type][test_id]['gamma_regrets_list']
 
-            time_0 = time.time()
-            new_key, key = jax.random.split(key)
-            fixed_regrets_mean, fixed_regrets_std, fixed_regrets_list, \
-            _, _, _, \
-            random_regrets_mean, random_regrets_std, random_regrets_list, \
-            gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list = \
-                test_bo(new_key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func,
-                        gp_distribution_params, fixed_gp_distribution_params, None, bo_sub_sample_batch_size)
-            results_a['bo_results'][ac_func_type][test_id] = {
-                'fixed_regrets_mean': fixed_regrets_mean,
-                'fixed_regrets_std': fixed_regrets_std,
-                'fixed_regrets_list': fixed_regrets_std_list,
-                'random_regrets_mean': random_regrets_mean,
-                'random_regrets_std': random_regrets_std,
-                'random_regrets_list': random_regrets_list,
-                'gamma_regrets_mean': gamma_regrets_mean,
-                'gamma_regrets_std': gamma_regrets_std,
-                'gamma_regrets_list': gamma_regrets_std_list,
-            }
-            print('fixed_regrets_mean = {}'.format(fixed_regrets_mean))
-            print('fixed_regrets_std = {}'.format(fixed_regrets_std))
-            print('random_regrets_mean = {}'.format(random_regrets_mean))
-            print('random_regrets_std = {}'.format(random_regrets_std))
-            print('gamma_regrets_mean = {}'.format(gamma_regrets_mean))
-            print('gamma_regrets_std = {}'.format(gamma_regrets_std))
             fixed_regrets_mean_list.append(fixed_regrets_mean)
             fixed_regrets_std_list.append(fixed_regrets_std)
             fixed_regrets_all_list.append(fixed_regrets_list)
@@ -699,8 +836,6 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
             gamma_regrets_mean_list.append(gamma_regrets_mean)
             gamma_regrets_std_list.append(gamma_regrets_std)
             gamma_regrets_all_list.append(gamma_regrets_list)
-            time_1 = time.time()
-            print('Time elapsed for running bo on test_id {} with ac_func {}: {}'.format(test_id, ac_func_type, time_1 - time_0))
 
         fixed_regrets_all_list = jnp.concatenate(fixed_regrets_all_list, axis=0)
         fixed_regrets_mean_total = jnp.mean(fixed_regrets_all_list, axis=0)
@@ -733,17 +868,9 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         gamma_nll_on_train_list.append([])
 
     for train_id in train_id_list:
-        print('NLL computation train_id = {}'.format(train_id))
-        dataset = dataset_func_combined(train_id)
-        print('Dataset loaded')
+        nll_results_train_id = np.load(os.path.join(dir_path, 'split_eval_nll_setup_a_id_{}.npy'.format(train_id)), allow_pickle=True).item()
 
-        # compute nll
-        n_dim = list(dataset.values())[0].x.shape[1]
-        new_key, key = jax.random.split(key)
-        fixed_nll_on_train_batches_i, fixed_n_for_train_sdl = \
-            hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                fixed_gp_distribution_params, eval_nll_batch_size, eval_nll_n_batches,
-                                sub_dataset_level=setup_a_nll_sub_dataset_level)
+        fixed_nll_on_train_batches_i, fixed_n_for_train_sdl = nll_results_train_id['fixed_nll_on_batches_i'], nll_results_train_id['fixed_n_for_sdl']
         if setup_a_nll_sub_dataset_level:
             fixed_n_for_train_sdl_total += fixed_n_for_train_sdl
             for k in range(eval_nll_n_batches):
@@ -751,11 +878,7 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         else:
             for k in range(eval_nll_n_batches):
                 fixed_nll_on_train_list[k].append(fixed_nll_on_train_batches_i[k])
-        new_key, key = jax.random.split(key)
-        gamma_nll_on_train_batches_i, gamma_n_for_train_sdl = \
-            hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                gp_distribution_params, eval_nll_batch_size, eval_nll_n_batches,
-                                sub_dataset_level=setup_a_nll_sub_dataset_level)
+        gamma_nll_on_train_batches_i, gamma_n_for_train_sdl = nll_results_train_id['gamma_nll_on_batches_i'], nll_results_train_id['gamma_n_for_sdl']
         if setup_a_nll_sub_dataset_level:
             gamma_n_for_train_sdl_total += gamma_n_for_train_sdl
             for k in range(eval_nll_n_batches):
@@ -773,16 +896,9 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         gamma_nll_on_test_list.append([])
 
     for test_id in test_id_list:
-        print('NLL computation test_id = {}'.format(test_id))
-        dataset = dataset_func_combined(test_id)
-        print('Dataset loaded')
-        # compute nll
-        n_dim = list(dataset.values())[0].x.shape[1]
-        new_key, key = jax.random.split(key)
-        fixed_nll_on_test_batches_i, fixed_n_for_test_sdl = \
-            hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                fixed_gp_distribution_params, eval_nll_batch_size, eval_nll_n_batches,
-                                sub_dataset_level=setup_a_nll_sub_dataset_level)
+        nll_results_test_id = np.load(os.path.join(dir_path, 'split_eval_nll_setup_a_id_{}.npy'.format(test_id)), allow_pickle=True).item()
+
+        fixed_nll_on_test_batches_i, fixed_n_for_test_sdl = nll_results_test_id['fixed_nll_on_batches_i'], nll_results_test_id['fixed_n_for_sdl']
         if setup_a_nll_sub_dataset_level:
             fixed_n_for_test_sdl_total += fixed_n_for_test_sdl
             for k in range(eval_nll_n_batches):
@@ -790,11 +906,7 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         else:
             for k in range(eval_nll_n_batches):
                 fixed_nll_on_test_list[k].append(fixed_nll_on_test_batches_i[k])
-        new_key, key = jax.random.split(key)
-        gamma_nll_on_test_batches_i, gamma_n_for_test_sdl = \
-            hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                gp_distribution_params, eval_nll_batch_size, eval_nll_n_batches,
-                                sub_dataset_level=setup_a_nll_sub_dataset_level)
+        gamma_nll_on_test_batches_i, gamma_n_for_test_sdl = nll_results_test_id['gamma_nll_on_batches_i'], nll_results_test_id['gamma_n_for_sdl']
         if setup_a_nll_sub_dataset_level:
             gamma_n_for_test_sdl_total += gamma_n_for_test_sdl
             for k in range(eval_nll_n_batches):
@@ -819,11 +931,6 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
             fixed_nll_on_train_batches.append(np.mean(fixed_nll_on_train_list[k]))
             gamma_nll_on_train_batches.append(np.mean(gamma_nll_on_train_list[k]))
 
-    print('fixed_nll_on_test = {}'.format(np.mean(fixed_nll_on_test_batches)))
-    print('gamma_nll_on_test = {}'.format(np.mean(gamma_nll_on_test_batches)))
-    print('fixed_nll_on_train = {}'.format(np.mean(fixed_nll_on_train_batches)))
-    print('gamma_nll_on_train = {}'.format(np.mean(gamma_nll_on_train_batches)))
-
     results_a['nll_results'] = {
         'fixed_nll_on_test_mean': np.mean(fixed_nll_on_test_batches),
         'gamma_nll_on_test_mean': np.mean(gamma_nll_on_test_batches),
@@ -840,53 +947,17 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
     results_b = results['setup_b']
 
     # fit gp parameters
-    constant_list = []
-    lengthscale_list = []
-    signal_variance_list = []
-    noise_variance_list = []
-
-    hyperbo_params = {}
-
     results_b['fit_gp_params'] = {}
     for train_id in setup_b_id_list:
-        print('train_id = {}'.format(train_id))
-        dataset, _ = dataset_func_split(train_id) # only use training set
-        print('Dataset loaded')
-        new_key, key = jax.random.split(key)
-        gp_params, nll_logs = fit_gp_params(new_key, dataset, cov_func, objective, opt_method, gp_fit_maxiter,
-                                            fit_gp_batch_size, adam_learning_rate)
-        results_b['fit_gp_params'][train_id] = {'gp_params': gp_params, 'nll_logs': nll_logs}
-        constant_list.append(gp_params['constant'])
-        lengthscale_list += list(gp_params['lengthscale'])
-        signal_variance_list.append(gp_params['signal_variance'])
-        noise_variance_list.append(gp_params['noise_variance'])
-        hyperbo_params[train_id] = GPParams(model=gp_params)
+        results_b['fit_gp_params'][train_id] = np.load(os.path.join(dir_path, 'split_fit_gp_params_setup_b_id_{}.npy'.format(train_id)), allow_pickle=True).item()
 
-    gp_distribution_params = {}
-    gp_distribution_params['constant'] = normal_param_from_thetas(np.array(constant_list))
-    gp_distribution_params['lengthscale'] = gamma_param_from_thetas(np.array(lengthscale_list))
-    gp_distribution_params['signal_variance'] = gamma_param_from_thetas(np.array(signal_variance_list))
-    gp_distribution_params['noise_variance'] = gamma_param_from_thetas(np.array(noise_variance_list))
-
-    results_b['gp_distribution_params'] = gp_distribution_params
+    results_b['gp_distribution_params'] = np.load(os.path.join(dir_path, 'split_alpha_mle_setup_b.npy'), allow_pickle=True).item()['gp_distribution_params']
 
     # run BO and compute NLL
     results_b['bo_results'] = {}
     results_b['bo_results_total'] = {}
 
     for ac_func_type in ac_func_type_list:
-        print('ac_func_type = {}'.format(ac_func_type))
-        if ac_func_type == 'ucb':
-            ac_func = acfun.ucb
-        elif ac_func_type == 'ei':
-            ac_func = acfun.ei
-        elif ac_func_type == 'pi':
-            ac_func = acfun.pi
-        elif ac_func_type == 'rand':
-            ac_func = acfun.rand
-        else:
-            raise ValueError('Unknown ac_func_type: {}'.format(ac_func_type))
-
         results_b['bo_results'][ac_func_type] = {}
 
         fixed_regrets_mean_list = []
@@ -903,41 +974,20 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         gamma_regrets_all_list = []
 
         for test_id in setup_b_id_list:
-            print('test_id = {}'.format(test_id))
-            _, dataset = dataset_func_split(test_id) # only use test set
-            print('Dataset loaded')
+            results_b['bo_results'][ac_func_type][test_id] = np.load(os.path.join(dir_path, 'split_test_bo_setup_b_id_{}.npy'.format(test_id)), allow_pickle=True).item()[ac_func_type]
+            fixed_regrets_mean = results_b['bo_results'][ac_func_type][test_id]['fixed_regrets_mean']
+            fixed_regrets_std = results_b['bo_results'][ac_func_type][test_id]['fixed_regrets_std']
+            fixed_regrets_list = results_b['bo_results'][ac_func_type][test_id]['fixed_regrets_list']
+            hyperbo_regrets_mean = results_b['bo_results'][ac_func_type][test_id]['hyperbo_regrets_mean']
+            hyperbo_regrets_std = results_b['bo_results'][ac_func_type][test_id]['hyperbo_regrets_std']
+            hyperbo_regrets_list = results_b['bo_results'][ac_func_type][test_id]['hyperbo_regrets_list']
+            random_regrets_mean = results_b['bo_results'][ac_func_type][test_id]['random_regrets_mean']
+            random_regrets_std = results_b['bo_results'][ac_func_type][test_id]['random_regrets_std']
+            random_regrets_list = results_b['bo_results'][ac_func_type][test_id]['random_regrets_list']
+            gamma_regrets_mean = results_b['bo_results'][ac_func_type][test_id]['gamma_regrets_mean']
+            gamma_regrets_std = results_b['bo_results'][ac_func_type][test_id]['gamma_regrets_std']
+            gamma_regrets_list = results_b['bo_results'][ac_func_type][test_id]['gamma_regrets_list']
 
-            time_0 = time.time()
-            new_key, key = jax.random.split(key)
-            fixed_regrets_mean, fixed_regrets_std, fixed_regrets_list, \
-            hyperbo_regrets_mean, hyperbo_regrets_std, hyperbo_regrets_list, \
-            random_regrets_mean, random_regrets_std, random_regrets_list, \
-            gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list = \
-                test_bo(new_key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func,
-                        gp_distribution_params, fixed_gp_distribution_params, hyperbo_params[test_id],
-                        bo_sub_sample_batch_size)
-            results_b['bo_results'][ac_func_type][test_id] = {
-                'fixed_regrets_mean': fixed_regrets_mean,
-                'fixed_regrets_std': fixed_regrets_std,
-                'fixed_regrets_list': fixed_regrets_std_list,
-                'hyperbo_regrets_mean': hyperbo_regrets_mean,
-                'hyperbo_regrets_std': hyperbo_regrets_std,
-                'hyperbo_regrets_list': hyperbo_regrets_list,
-                'random_regrets_mean': random_regrets_mean,
-                'random_regrets_std': random_regrets_std,
-                'random_regrets_list': random_regrets_list,
-                'gamma_regrets_mean': gamma_regrets_mean,
-                'gamma_regrets_std': gamma_regrets_std,
-                'gamma_regrets_list': gamma_regrets_std_list,
-            }
-            print('fixed_regrets_mean = {}'.format(fixed_regrets_mean))
-            print('fixed_regrets_std = {}'.format(fixed_regrets_std))
-            print('hyperbo_regrets_mean = {}'.format(hyperbo_regrets_mean))
-            print('hyperbo_regrets_std = {}'.format(hyperbo_regrets_std))
-            print('random_regrets_mean = {}'.format(random_regrets_mean))
-            print('random_regrets_std = {}'.format(random_regrets_std))
-            print('gamma_regrets_mean = {}'.format(gamma_regrets_mean))
-            print('gamma_regrets_std = {}'.format(gamma_regrets_std))
             fixed_regrets_mean_list.append(fixed_regrets_mean)
             fixed_regrets_std_list.append(fixed_regrets_std)
             fixed_regrets_all_list.append(fixed_regrets_list)
@@ -950,8 +1000,6 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
             gamma_regrets_mean_list.append(gamma_regrets_mean)
             gamma_regrets_std_list.append(gamma_regrets_std)
             gamma_regrets_all_list.append(gamma_regrets_list)
-            time_1 = time.time()
-            print('Time elapsed for running bo on test_id {} with ac_func {}: {}'.format(test_id, ac_func_type, time_1 - time_0))
 
         fixed_regrets_all_list = jnp.concatenate(fixed_regrets_all_list, axis=0)
         fixed_regrets_mean_total = jnp.mean(fixed_regrets_all_list, axis=0)
@@ -993,32 +1041,22 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         hyperbo_nll_on_train_list.append([])
 
     for train_id in setup_b_id_list:
-        print('NLL computation train_id = {}'.format(train_id))
-        dataset, _ = dataset_func_split(train_id)  # only use train set
-        print('Dataset loaded')
-
-        # compute nll
-        n_dim = list(dataset.values())[0].x.shape[1]
-        new_key, key = jax.random.split(key)
-        fixed_nll_on_train_batches_i, fixed_n_for_train_sdl = \
-            hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                fixed_gp_distribution_params, eval_nll_batch_size, eval_nll_n_batches,
-                                sub_dataset_level=True)
+        nll_results_train_id = np.load(os.path.join(dir_path, 'split_eval_nll_setup_b_train_id_{}.npy'.format(train_id)),
+                                       allow_pickle=True).item()
+        fixed_nll_on_train_batches_i, fixed_n_for_train_sdl = nll_results_train_id['fixed_nll_on_batches_i'], \
+                                                              nll_results_train_id['fixed_n_for_sdl']
         fixed_n_for_train_sdl_total += fixed_n_for_train_sdl
         for k in range(eval_nll_n_batches):
             fixed_nll_on_train_list[k].append(fixed_nll_on_train_batches_i[k] * fixed_n_for_train_sdl)
-        new_key, key = jax.random.split(key)
-        gamma_nll_on_train_batches_i, gamma_n_for_train_sdl = \
-            hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                gp_distribution_params, eval_nll_batch_size, eval_nll_n_batches,
-                                sub_dataset_level=True)
+
+        gamma_nll_on_train_batches_i, gamma_n_for_train_sdl = nll_results_train_id['gamma_nll_on_batches_i'], \
+                                                              nll_results_train_id['gamma_n_for_sdl']
         gamma_n_for_train_sdl_total += gamma_n_for_train_sdl
         for k in range(eval_nll_n_batches):
             gamma_nll_on_train_list[k].append(gamma_nll_on_train_batches_i[k] * gamma_n_for_train_sdl)
         new_key, key = jax.random.split(key)
-        hyperbo_nll_on_train_batches_i, hyperbo_n_for_train_sdl = \
-            gp_nll_sub_dataset_level(new_key, dataset, cov_func, hyperbo_params[train_id], eval_nll_batch_size,
-                                     eval_nll_n_batches)
+        hyperbo_nll_on_train_batches_i, hyperbo_n_for_train_sdl = nll_results_train_id['hyperbo_nll_on_batches_i'], \
+                                                                  nll_results_train_id['hyperbo_n_for_sdl']
         hyperbo_n_for_train_sdl_total += hyperbo_n_for_train_sdl
         for k in range(eval_nll_n_batches):
             hyperbo_nll_on_train_list[k].append(hyperbo_nll_on_train_batches_i[k] * hyperbo_n_for_train_sdl)
@@ -1035,32 +1073,21 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         hyperbo_nll_on_test_list.append([])
 
     for test_id in setup_b_id_list:
-        print('test_id = {}'.format(test_id))
-        _, dataset = dataset_func_split(test_id)  # only use test set
-        print('Dataset loaded')
-        # compute nll
-        n_dim = list(dataset.values())[0].x.shape[1]
+        nll_results_test_id = np.load(os.path.join(dir_path, 'split_eval_nll_setup_b_test_id_{}.npy'.format(test_id)),
+                                      allow_pickle=True).item()
 
-        new_key, key = jax.random.split(key)
-        fixed_nll_on_test_batches_i, fixed_n_for_test_sdl = \
-            hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                fixed_gp_distribution_params, eval_nll_batch_size, eval_nll_n_batches,
-                                sub_dataset_level=True)
+        fixed_nll_on_test_batches_i, fixed_n_for_test_sdl = nll_results_test_id['fixed_nll_on_batches_i'], \
+                                                            nll_results_test_id['fixed_n_for_sdl']
         fixed_n_for_test_sdl_total += fixed_n_for_test_sdl
         for k in range(eval_nll_n_batches):
             fixed_nll_on_test_list[k].append(fixed_nll_on_test_batches_i[k] * fixed_n_for_test_sdl)
-        new_key, key = jax.random.split(key)
-        gamma_nll_on_test_batches_i, gamma_n_for_test_sdl = \
-            hierarchical_gp_nll(new_key, dataset, cov_func, n_dim, n_nll_gamma_samples,
-                                gp_distribution_params, eval_nll_batch_size, eval_nll_n_batches,
-                                sub_dataset_level=True)
+        gamma_nll_on_test_batches_i, gamma_n_for_test_sdl = nll_results_test_id['gamma_nll_on_batches_i'], \
+                                                            nll_results_test_id['gamma_n_for_sdl']
         gamma_n_for_test_sdl_total += gamma_n_for_test_sdl
         for k in range(eval_nll_n_batches):
             gamma_nll_on_test_list[k].append(gamma_nll_on_test_batches_i[k] * gamma_n_for_test_sdl)
-        new_key, key = jax.random.split(key)
-        hyperbo_nll_on_test_batches_i, hyperbo_n_for_test_sdl = \
-            gp_nll_sub_dataset_level(new_key, dataset, cov_func, hyperbo_params[test_id], eval_nll_batch_size,
-                                     eval_nll_n_batches)
+        hyperbo_nll_on_test_batches_i, hyperbo_n_for_test_sdl = nll_results_test_id['hyperbo_nll_on_batches_i'], \
+                                                                nll_results_test_id['hyperbo_n_for_sdl']
         hyperbo_n_for_test_sdl_total += hyperbo_n_for_test_sdl
         for k in range(eval_nll_n_batches):
             hyperbo_nll_on_test_list[k].append(hyperbo_nll_on_test_batches_i[k] * hyperbo_n_for_test_sdl)
@@ -1078,13 +1105,6 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
         fixed_nll_on_train_batches.append(np.sum(fixed_nll_on_train_list[k]) / fixed_n_for_train_sdl_total)
         gamma_nll_on_train_batches.append(np.sum(gamma_nll_on_train_list[k]) / gamma_n_for_train_sdl_total)
         hyperbo_nll_on_train_batches.append(np.sum(hyperbo_nll_on_train_list[k]) / hyperbo_n_for_train_sdl_total)
-
-    print('fixed_nll_on_test = {}'.format(np.mean(fixed_nll_on_test_batches)))
-    print('gamma_nll_on_test = {}'.format(np.mean(gamma_nll_on_test_batches)))
-    print('hyperbo_nll_on_test = {}'.format(np.mean(hyperbo_nll_on_test_batches)))
-    print('fixed_nll_on_train = {}'.format(np.mean(fixed_nll_on_train_batches)))
-    print('gamma_nll_on_train = {}'.format(np.mean(gamma_nll_on_train_batches)))
-    print('hyperbo_nll_on_train = {}'.format(np.mean(hyperbo_nll_on_train_batches)))
 
     results_b['nll_results'] = {
         'fixed_nll_on_test_mean': np.mean(fixed_nll_on_test_batches),
@@ -1148,19 +1168,31 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
             f.write('ac_func_type = {}\n'.format(ac_func_type))
             for test_id in test_id_list:
                 f.write('test_id = {}\n'.format(test_id))
-                f.write('fixed_regrets_mean = {}\n'.format(results_a['bo_results'][ac_func_type][test_id]['fixed_regrets_mean']))
-                f.write('fixed_regrets_std = {}\n'.format(results_a['bo_results'][ac_func_type][test_id]['fixed_regrets_std']))
-                f.write('random_regrets_mean = {}\n'.format(results_a['bo_results'][ac_func_type][test_id]['random_regrets_mean']))
-                f.write('random_regrets_std = {}\n'.format(results_a['bo_results'][ac_func_type][test_id]['random_regrets_std']))
-                f.write('gamma_regrets_mean = {}\n'.format(results_a['bo_results'][ac_func_type][test_id]['gamma_regrets_mean']))
-                f.write('gamma_regrets_std = {}\n'.format(results_a['bo_results'][ac_func_type][test_id]['gamma_regrets_std']))
+                f.write('fixed_regrets_mean = {}\n'.format(
+                    results_a['bo_results'][ac_func_type][test_id]['fixed_regrets_mean']))
+                f.write('fixed_regrets_std = {}\n'.format(
+                    results_a['bo_results'][ac_func_type][test_id]['fixed_regrets_std']))
+                f.write('random_regrets_mean = {}\n'.format(
+                    results_a['bo_results'][ac_func_type][test_id]['random_regrets_mean']))
+                f.write('random_regrets_std = {}\n'.format(
+                    results_a['bo_results'][ac_func_type][test_id]['random_regrets_std']))
+                f.write('gamma_regrets_mean = {}\n'.format(
+                    results_a['bo_results'][ac_func_type][test_id]['gamma_regrets_mean']))
+                f.write('gamma_regrets_std = {}\n'.format(
+                    results_a['bo_results'][ac_func_type][test_id]['gamma_regrets_std']))
                 f.write('\n')
-            f.write('fixed_regrets_mean_total = {}\n'.format(results_a['bo_results_total'][ac_func_type]['fixed_regrets_mean']))
-            f.write('fixed_regrets_std_total = {}\n'.format(results_a['bo_results_total'][ac_func_type]['fixed_regrets_std']))
-            f.write('random_regrets_mean_total = {}\n'.format(results_a['bo_results_total'][ac_func_type]['random_regrets_mean']))
-            f.write('random_regrets_std_total = {}\n'.format(results_a['bo_results_total'][ac_func_type]['random_regrets_std']))
-            f.write('gamma_regrets_mean_total = {}\n'.format(results_a['bo_results_total'][ac_func_type]['gamma_regrets_mean']))
-            f.write('gamma_regrets_std_total = {}\n'.format(results_a['bo_results_total'][ac_func_type]['gamma_regrets_std']))
+            f.write('fixed_regrets_mean_total = {}\n'.format(
+                results_a['bo_results_total'][ac_func_type]['fixed_regrets_mean']))
+            f.write('fixed_regrets_std_total = {}\n'.format(
+                results_a['bo_results_total'][ac_func_type]['fixed_regrets_std']))
+            f.write('random_regrets_mean_total = {}\n'.format(
+                results_a['bo_results_total'][ac_func_type]['random_regrets_mean']))
+            f.write('random_regrets_std_total = {}\n'.format(
+                results_a['bo_results_total'][ac_func_type]['random_regrets_std']))
+            f.write('gamma_regrets_mean_total = {}\n'.format(
+                results_a['bo_results_total'][ac_func_type]['gamma_regrets_mean']))
+            f.write('gamma_regrets_std_total = {}\n'.format(
+                results_a['bo_results_total'][ac_func_type]['gamma_regrets_std']))
             f.write('\n')
 
         f.write('fixed_nll_on_test_mean = {}\n'.format(results_a['nll_results']['fixed_nll_on_test_mean']))
@@ -1184,23 +1216,39 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
             f.write('ac_func_type = {}\n'.format(ac_func_type))
             for test_id in setup_b_id_list:
                 f.write('test_id = {}\n'.format(test_id))
-                f.write('fixed_regrets_mean = {}\n'.format(results_b['bo_results'][ac_func_type][test_id]['fixed_regrets_mean']))
-                f.write('fixed_regrets_std = {}\n'.format(results_b['bo_results'][ac_func_type][test_id]['fixed_regrets_std']))
-                f.write('hyperbo_regrets_mean = {}\n'.format(results_b['bo_results'][ac_func_type][test_id]['hyperbo_regrets_mean']))
-                f.write('hyperbo_regrets_std = {}\n'.format(results_b['bo_results'][ac_func_type][test_id]['hyperbo_regrets_std']))
-                f.write('random_regrets_mean = {}\n'.format(results_b['bo_results'][ac_func_type][test_id]['random_regrets_mean']))
-                f.write('random_regrets_std = {}\n'.format(results_b['bo_results'][ac_func_type][test_id]['random_regrets_std']))
-                f.write('gamma_regrets_mean = {}\n'.format(results_b['bo_results'][ac_func_type][test_id]['gamma_regrets_mean']))
-                f.write('gamma_regrets_std = {}\n'.format(results_b['bo_results'][ac_func_type][test_id]['gamma_regrets_std']))
+                f.write('fixed_regrets_mean = {}\n'.format(
+                    results_b['bo_results'][ac_func_type][test_id]['fixed_regrets_mean']))
+                f.write('fixed_regrets_std = {}\n'.format(
+                    results_b['bo_results'][ac_func_type][test_id]['fixed_regrets_std']))
+                f.write('hyperbo_regrets_mean = {}\n'.format(
+                    results_b['bo_results'][ac_func_type][test_id]['hyperbo_regrets_mean']))
+                f.write('hyperbo_regrets_std = {}\n'.format(
+                    results_b['bo_results'][ac_func_type][test_id]['hyperbo_regrets_std']))
+                f.write('random_regrets_mean = {}\n'.format(
+                    results_b['bo_results'][ac_func_type][test_id]['random_regrets_mean']))
+                f.write('random_regrets_std = {}\n'.format(
+                    results_b['bo_results'][ac_func_type][test_id]['random_regrets_std']))
+                f.write('gamma_regrets_mean = {}\n'.format(
+                    results_b['bo_results'][ac_func_type][test_id]['gamma_regrets_mean']))
+                f.write('gamma_regrets_std = {}\n'.format(
+                    results_b['bo_results'][ac_func_type][test_id]['gamma_regrets_std']))
                 f.write('\n')
-            f.write('fixed_regrets_mean_total = {}\n'.format(results_b['bo_results_total'][ac_func_type]['fixed_regrets_mean']))
-            f.write('fixed_regrets_std_total = {}\n'.format(results_b['bo_results_total'][ac_func_type]['fixed_regrets_std']))
-            f.write('hyperbo_regrets_mean_total = {}\n'.format(results_b['bo_results_total'][ac_func_type]['hyperbo_regrets_mean']))
-            f.write('hyperbo_regrets_std_total = {}\n'.format(results_b['bo_results_total'][ac_func_type]['hyperbo_regrets_std']))
-            f.write('random_regrets_mean_total = {}\n'.format(results_b['bo_results_total'][ac_func_type]['random_regrets_mean']))
-            f.write('random_regrets_std_total = {}\n'.format(results_b['bo_results_total'][ac_func_type]['random_regrets_std']))
-            f.write('gamma_regrets_mean_total = {}\n'.format(results_b['bo_results_total'][ac_func_type]['gamma_regrets_mean']))
-            f.write('gamma_regrets_std_total = {}\n'.format(results_b['bo_results_total'][ac_func_type]['gamma_regrets_std']))
+            f.write('fixed_regrets_mean_total = {}\n'.format(
+                results_b['bo_results_total'][ac_func_type]['fixed_regrets_mean']))
+            f.write('fixed_regrets_std_total = {}\n'.format(
+                results_b['bo_results_total'][ac_func_type]['fixed_regrets_std']))
+            f.write('hyperbo_regrets_mean_total = {}\n'.format(
+                results_b['bo_results_total'][ac_func_type]['hyperbo_regrets_mean']))
+            f.write('hyperbo_regrets_std_total = {}\n'.format(
+                results_b['bo_results_total'][ac_func_type]['hyperbo_regrets_std']))
+            f.write('random_regrets_mean_total = {}\n'.format(
+                results_b['bo_results_total'][ac_func_type]['random_regrets_mean']))
+            f.write('random_regrets_std_total = {}\n'.format(
+                results_b['bo_results_total'][ac_func_type]['random_regrets_std']))
+            f.write('gamma_regrets_mean_total = {}\n'.format(
+                results_b['bo_results_total'][ac_func_type]['gamma_regrets_mean']))
+            f.write('gamma_regrets_std_total = {}\n'.format(
+                results_b['bo_results_total'][ac_func_type]['gamma_regrets_std']))
             f.write('\n')
 
         f.write('fixed_nll_on_test_mean = {}\n'.format(results_b['nll_results']['fixed_nll_on_test_mean']))
@@ -1219,108 +1267,84 @@ def run(key, extra_info, dataset_func_combined, dataset_func_split, train_id_lis
     print('done.')
 
 
-hpob_full_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767',
-                     '6794', '7607', '7609', '5889']
-
-kernel_list = [
-    # ('squared_exponential nll', kernel.squared_exponential, obj.nll, 'lbfgs'),
-    ('matern32 adam', kernel.matern32, obj.nll, 'adam'),
-    # ('matern32 nll', kernel.matern32, obj.nll, 'lbfgs'),
-    # ('matern52 nll', kernel.matern52, obj.nll, 'lbfgs'),
-    # ('matern32_mlp nll', kernel.matern32_mlp, obj.nll, 'lbfgs'),
-    # ('matern52_mlp nll', kernel.matern52_mlp, obj.nll, 'lbfgs'),
-    # ('squared_exponential_mlp nll', kernel.squared_exponential_mlp, obj.nll, 'lbfgs'),
-    # ('dot_product_mlp nll', kernel.dot_product_mlp, obj.nll, 'lbfgs'),
-    # ('dot_product_mlp nll adam', kernel.dot_product_mlp, obj.nll, 'adam'),
-    # ('squared_exponential_mlp nll adam', kernel.squared_exponential_mlp, obj.nll, 'adam'),
-
-    # ('squared_exponential kl', kernel.squared_exponential, obj.kl, 'lbfgs'),
-    # ('matern32 kl', kernel.matern32, obj.kl, 'lbfgs'),
-    # ('matern52 kl', kerne.matern52, obj.kl, 'lbfgs'),
-    # ('matern32_mlp kl', kernel.matern32_mlp, obj.kl, 'lbfgs'),
-    # ('matern52_mlp kl', kernel.matern52_mlp, obj.kl, 'lbfgs'),
-    # ('squared_exponential_mlp kl', kernel.squared_exponential_mlp, obj.kl, 'lbfgs'),
-    # ('dot_product_mlp kl', kernel.dot_product_mlp, obj.kl, 'lbfgs'),
-    # ('dot_product_mlp kl adam', kernel.dot_product_mlp, obj.kl, 'adam'),
-    # ('squared_exponential_mlp kl adam', kernel.squared_exponential_mlp, obj.kl, 'adam')
-]
-
-
 if __name__ == '__main__':
-    # train_id_list = ['5860', '5906']
-    # test_id_list = ['5889']
-    # train_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767']
-    # train_id_list = ['6766', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6767', '6794']
-    # train_id_list = ['4796', '5527', '5636', '5859', '5891', '5965', '5970', '5971', '6766', '6767', '6794', '7607', '7609']
-    # train_id_list = ['4796', '5527', '5636']
-    # test_id_list = ['4796', '5860', '5906', '7607', '7609', '5889']
-    # test_id_list = ['5860', '5906', '5889']
-    # setup_b_id_list = ['4796', '5860', '5906', '7607', '7609', '5889']
-    # setup_b_id_list = ['5860', '5906', '5889']
+    parser = argparse.ArgumentParser(description='Test HyperBO+ split.')
 
-    # train_id_list = ['4796', '5527']
-    train_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767']
-    test_id_list = ['6794', '7607', '7609', '5889']
-    setup_b_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767',
-                       '6794', '7607', '7609', '5889']
+    parser.add_argument('--group_id', default='split_0', type=str, help='split group id')
+    parser.add_argument('--mode', default='', type=str, help='mode')
+    parser.add_argument('--dataset_id', default='', type=str, help='dataset id')
+    parser.add_argument('--key_0', default=0, type=int, help='key 0')
+    parser.add_argument('--key_1', default=0, type=int, help='key 1')
+    args = parser.parse_args()
 
-    # train_id_list = ['4796', '5527', '5636', '5859', '5860']
-    # test_id_list = ['6794', '7607']
-    # setup_b_id_list = ['4796', '5527', '5636', '5859', '5860']
+    dir_path = os.path.join('results', 'test_hyperbo_plus_split', args.group_id)
 
-    # dataset_func_combined = data.hpob_dataset_v2
-    # dataset_func_split = data.hpob_dataset_v3
-    # extra_info = ''
-    hpob_converted_data_path = './hpob_converted_data/sub_sample_1000.npy'
-    dataset_func_combined = partial(data.hpob_converted_dataset_combined, hpob_converted_data_path)
-    dataset_func_split = partial(data.hpob_converted_dataset_split, hpob_converted_data_path)
-    extra_info = 'hpob_converted_data_path = \'{}\''.format(hpob_converted_data_path)
+    # construct the jax random key
+    key = jnp.array([args.key_0, args.key_1], dtype=jnp.uint32)
 
-    '''
-    # train_id_list = [0]
-    # train_id_list = list(range(4))
-    # test_id_list = list(range(4, 6))
-    # setup_b_id_list = list(range(6))
-    train_id_list = list(range(16))
-    test_id_list = list(range(16, 20))
-    setup_b_id_list = list(range(20))
-    synthetic_data_path = './synthetic_data/dataset_5.npy'
-    dataset_func_combined = partial(data.hyperbo_plus_synthetic_dataset_combined, synthetic_data_path)
-    dataset_func_split = partial(data.hyperbo_plus_synthetic_dataset_split, synthetic_data_path)
-    extra_info = 'synthetic_data_path = \'{}\''.format(synthetic_data_path)
-    '''
+    # read configs
+    configs = np.load(os.path.join(dir_path, 'configs.npy'), allow_pickle=True).item()
 
-    n_workers = 25
-    budget = 50 # 50
-    n_bo_runs = 1
-    gp_fit_maxiter = 5000 # 50000 for adam (5000 ~ 6.5 min per id), 500 for lbfgs
-    n_bo_gamma_samples = 100 # 100
-    n_nll_gamma_samples = 500 # 500
-    setup_a_nll_sub_dataset_level = True
-    fit_gp_batch_size = 50 # 50 for adam, 300 for lbfgs
-    bo_sub_sample_batch_size = 1000 # 1000 for hpob, 300 for synthetic 4, 1000 for synthetic 5
-    adam_learning_rate = 0.001
-    eval_nll_batch_size = 100 # 300
-    eval_nll_n_batches = 1
-    ac_func_type_list = ['ucb', 'ei', 'pi']
+    train_id_list = configs['train_id_list']
+    test_id_list = configs['test_id_list']
+    setup_b_id_list = configs['setup_b_id_list']
+    dataset_func_combined = configs['dataset_func_combined']
+    dataset_func_split = configs['dataset_func_split']
+    extra_info = configs['extra_info']
+    n_workers = configs['n_workers']
+    budget = configs['budget']
+    n_bo_runs = configs['n_bo_runs']
+    gp_fit_maxiter = configs['gp_fit_maxiter']
+    n_bo_gamma_samples = configs['n_bo_gamma_samples']
+    n_nll_gamma_samples = configs['n_nll_gamma_samples']
+    setup_a_nll_sub_dataset_level = configs['setup_a_nll_sub_dataset_level']
+    fit_gp_batch_size = configs['fit_gp_batch_size']
+    bo_sub_sample_batch_size = configs['bo_sub_sample_batch_size']
+    adam_learning_rate = configs['adam_learning_rate']
+    eval_nll_batch_size = configs['eval_nll_batch_size']
+    eval_nll_n_batches = configs['eval_nll_n_batches']
+    ac_func_type_list = configs['ac_func_type_list']
+    fixed_gp_distribution_params = configs['fixed_gp_distribution_params']
+    kernel_type = configs['kernel_type']
 
-    fixed_gp_distribution_params = {
-        'constant': (0.0, 1.0),
-        'lengthscale': (1.0, 10.0),
-        'signal_variance': (1.0, 5.0),
-        'noise_variance': (10.0, 100.0)
-    }
+    kernel_name, cov_func, objective, opt_method = kernel_type
 
-    key = jax.random.PRNGKey(0)
-
-    for kernel_type in kernel_list:
-        new_key, key = jax.random.split(key)
-        run(new_key, extra_info, dataset_func_combined, dataset_func_split, train_id_list, test_id_list,
-            setup_b_id_list,
-            n_workers, kernel_type[0], kernel_type[1], kernel_type[2], kernel_type[3], budget, n_bo_runs,
-            n_bo_gamma_samples, ac_func_type_list, gp_fit_maxiter, fixed_gp_distribution_params, n_nll_gamma_samples,
-            setup_a_nll_sub_dataset_level, fit_gp_batch_size, bo_sub_sample_batch_size, adam_learning_rate,
-            eval_nll_batch_size, eval_nll_n_batches)
-
-    print('All done.')
+    if args.mode == 'fit_gp_params_setup_a_id':
+        split_fit_gp_params_id(dir_path, key, 'a', args.dataset_id, dataset_func_combined, dataset_func_split,
+                               cov_func, objective, opt_method, gp_fit_maxiter, fit_gp_batch_size, adam_learning_rate)
+    elif args.mode == 'fit_gp_params_setup_b_id':
+        split_fit_gp_params_id(dir_path, key, 'b', args.dataset_id, dataset_func_combined, dataset_func_split,
+                               cov_func, objective, opt_method, gp_fit_maxiter, fit_gp_batch_size, adam_learning_rate)
+    elif args.mode == 'alpha_mle_setup_a':
+        split_alpha_mle(dir_path, 'a', train_id_list)
+    elif args.mode == 'alpha_mle_setup_b':
+        split_alpha_mle(dir_path, 'b', setup_b_id_list)
+    elif args.mode == 'test_bo_setup_a_id':
+        split_test_bo_setup_a_id(dir_path, key, args.dataset_id, dataset_func_combined, cov_func, budget, n_bo_runs,
+                                 n_bo_gamma_samples, ac_func_type_list, fixed_gp_distribution_params,
+                                 bo_sub_sample_batch_size)
+    elif args.mode == 'test_bo_setup_b_id':
+        split_test_bo_setup_b_id(dir_path, key, args.dataset_id, dataset_func_split, setup_b_id_list, cov_func,
+                                 budget, n_bo_runs, n_bo_gamma_samples, ac_func_type_list, fixed_gp_distribution_params,
+                                 bo_sub_sample_batch_size)
+    elif args.mode == 'eval_nll_setup_a_id':
+        split_eval_nll_setup_a_id(dir_path, key, args.dataset_id, dataset_func_combined, cov_func,
+                                  fixed_gp_distribution_params, n_nll_gamma_samples, setup_a_nll_sub_dataset_level,
+                                  eval_nll_batch_size, eval_nll_n_batches)
+    elif args.mode == 'eval_nll_setup_b_train_id':
+        split_eval_nll_setup_b_id(dir_path, key, args.dataset_id, 'train', dataset_func_split, cov_func,
+                                  fixed_gp_distribution_params, n_nll_gamma_samples, eval_nll_batch_size,
+                                  eval_nll_n_batches)
+    elif args.mode == 'eval_nll_setup_b_test_id':
+        split_eval_nll_setup_b_id(dir_path, key, args.dataset_id, 'test', dataset_func_split, cov_func,
+                                  fixed_gp_distribution_params, n_nll_gamma_samples, eval_nll_batch_size,
+                                  eval_nll_n_batches)
+    elif args.mode == 'merge':
+        split_merge(dir_path, key, args.group_id, extra_info, train_id_list, test_id_list,
+                    setup_b_id_list, n_workers, kernel_name, cov_func, objective, opt_method, budget, n_bo_runs,
+                    n_bo_gamma_samples, ac_func_type_list, gp_fit_maxiter, fixed_gp_distribution_params,
+                    n_nll_gamma_samples, setup_a_nll_sub_dataset_level, fit_gp_batch_size, bo_sub_sample_batch_size,
+                    adam_learning_rate, eval_nll_batch_size, eval_nll_n_batches)
+    else:
+        raise ValueError('Unknown mode: {}'.format(args.mode))
 
