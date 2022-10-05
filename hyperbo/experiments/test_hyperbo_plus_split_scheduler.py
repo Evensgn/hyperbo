@@ -64,7 +64,9 @@ kernel_list = [
 
 
 if __name__ == '__main__':
-    group_id = 'split_0'
+    group_id = 'split_4'
+    python_cmd = '/home/azureuser/hyperbo/env-pd/bin/python'
+    worker_path = '/home/azureuser/hyperbo/hyperbo/experiments/test_hyperbo_plus_split_worker.py'
 
     # train_id_list = ['5860', '5906']
     # test_id_list = ['5889']
@@ -87,23 +89,28 @@ if __name__ == '__main__':
     # test_id_list = ['6794', '7607']
     # setup_b_id_list = ['4796', '5527', '5636', '5859', '5860']
 
-    # dataset_func_combined = data.hpob_dataset_v2
-    # dataset_func_split = data.hpob_dataset_v3
-    # extra_info = ''
-    hpob_converted_data_path = './hpob_converted_data/sub_sample_1000.npy'
-    dataset_func_combined = partial(data.hpob_converted_dataset_combined, hpob_converted_data_path)
-    dataset_func_split = partial(data.hpob_converted_dataset_split, hpob_converted_data_path)
-    extra_info = 'hpob_converted_data_path = \'{}\''.format(hpob_converted_data_path)
+    dataset_func_combined = data.hpob_dataset_v2
+    dataset_func_split = data.hpob_dataset_v3
+    extra_info = ''
+
+    # hpob_converted_data_path = './hpob_converted_data/sub_sample_1000.npy'
+    # dataset_func_combined = partial(data.hpob_converted_dataset_combined, hpob_converted_data_path)
+    # dataset_func_split = partial(data.hpob_converted_dataset_split, hpob_converted_data_path)
+    # extra_info = 'hpob_converted_data_path = \'{}\''.format(hpob_converted_data_path)
 
     '''
     # train_id_list = [0]
-    # train_id_list = list(range(4))
-    # test_id_list = list(range(4, 6))
-    # setup_b_id_list = list(range(6))
-    train_id_list = list(range(16))
-    test_id_list = list(range(16, 20))
-    setup_b_id_list = list(range(20))
-    synthetic_data_path = './synthetic_data/dataset_5.npy'
+    train_id_list = list(range(4))
+    test_id_list = list(range(4, 6))
+    setup_b_id_list = list(range(6))
+    # train_id_list = list(range(16))
+    # test_id_list = list(range(16, 20))
+    # setup_b_id_list = list(range(20))
+
+    train_id_list = [str(x) for x in train_id_list]
+    test_id_list = [str(x) for x in test_id_list]
+    setup_b_id_list = [str(x) for x in setup_b_id_list]
+    synthetic_data_path = './synthetic_data/dataset_4.npy'
     dataset_func_combined = partial(data.hyperbo_plus_synthetic_dataset_combined, synthetic_data_path)
     dataset_func_split = partial(data.hyperbo_plus_synthetic_dataset_split, synthetic_data_path)
     extra_info = 'synthetic_data_path = \'{}\''.format(synthetic_data_path)
@@ -112,15 +119,15 @@ if __name__ == '__main__':
     n_workers = 25
     budget = 50  # 50
     n_bo_runs = 1
-    gp_fit_maxiter = 5000  # 50000 for adam (5000 ~ 6.5 min per id), 500 for lbfgs
+    gp_fit_maxiter = 20000 # 50000 for adam (5000 ~ 6.5 min per id), 500 for lbfgs
     n_bo_gamma_samples = 100  # 100
     n_nll_gamma_samples = 500  # 500
     setup_a_nll_sub_dataset_level = True
     fit_gp_batch_size = 50  # 50 for adam, 300 for lbfgs
-    bo_sub_sample_batch_size = 1000  # 1000 for hpob, 300 for synthetic 4, 1000 for synthetic 5
+    bo_sub_sample_batch_size = 1000 # 1000 for hpob, 300 for synthetic 4, 1000 for synthetic 5
     adam_learning_rate = 0.001
     eval_nll_batch_size = 100  # 300
-    eval_nll_n_batches = 1
+    eval_nll_n_batches = 10
     ac_func_type_list = ['ucb', 'ei', 'pi']
 
     fixed_gp_distribution_params = {
@@ -169,113 +176,131 @@ if __name__ == '__main__':
     }
     np.save(os.path.join(dir_path, 'configs.npy'), configs)
 
+    time_0 = time.time()
+
     # fit_gp_params_setup_a_id
     print('fit_gp_params_setup_a_id')
     sub_process_list = []
     for train_id in train_id_list:
         new_key, key = jax.random.split(key)
-        sub_process_i = subprocess.Popen(['python', 'test_hyperbo_plus_split_worker.py', '--group_id', group_id,
+        sub_process_i = subprocess.Popen([python_cmd, worker_path, '--group_id', group_id,
                                           '--mode', 'fit_gp_params_setup_a_id', '--dataset_id', train_id, '--key_0',
                                           str(new_key[0]), '--key_1', str(new_key[1])])
         sub_process_list.append(sub_process_i)
     for sub_process_i in sub_process_list:
         sub_process_i.wait()
+    time_1 = time.time()
 
     # alpha_mle_setup_a
     print('alpha_mle_setup_a')
     new_key, key = jax.random.split(key)
     sub_process_0 = subprocess.Popen(
-        ['python', 'test_hyperbo_plus_split_worker.py', '--group_id', group_id, '--mode', 'alpha_mle_setup_a',
+        [python_cmd, worker_path, '--group_id', group_id, '--mode', 'alpha_mle_setup_a',
          '--dataset_id', '', '--key_0', str(new_key[0]), '--key_1', str(new_key[1])])
     sub_process_0.wait()
+    time_2 = time.time()
 
     # test_bo_setup_a_id
     print('test_bo_setup_a_id')
     sub_process_list = []
     for test_id in test_id_list:
         new_key, key = jax.random.split(key)
-        sub_process_i = subprocess.Popen(['python', 'test_hyperbo_plus_split_worker.py', '--group_id', group_id,
+        sub_process_i = subprocess.Popen([python_cmd, worker_path, '--group_id', group_id,
                                           '--mode', 'test_bo_setup_a_id', '--dataset_id', test_id, '--key_0',
                                           str(new_key[0]), '--key_1', str(new_key[1])])
         sub_process_list.append(sub_process_i)
     for sub_process_i in sub_process_list:
         sub_process_i.wait()
+    time_3 = time.time()
 
     # eval_nll_setup_a_id
     print('eval_nll_setup_a_id')
     sub_process_list = []
     for dataset_id in (train_id_list + test_id_list):
         new_key, key = jax.random.split(key)
-        sub_process_i = subprocess.Popen(['python', 'test_hyperbo_plus_split_worker.py', '--group_id', group_id,
+        sub_process_i = subprocess.Popen([python_cmd, worker_path, '--group_id', group_id,
                                           '--mode', 'eval_nll_setup_a_id', '--dataset_id', dataset_id, '--key_0',
                                           str(new_key[0]), '--key_1', str(new_key[1])])
         sub_process_list.append(sub_process_i)
     for sub_process_i in sub_process_list:
         sub_process_i.wait()
+    time_4 = time.time()
 
     # fit_gp_params_setup_b_id
     print('fit_gp_params_setup_b_id')
     sub_process_list = []
     for train_id in setup_b_id_list:
         new_key, key = jax.random.split(key)
-        sub_process_i = subprocess.Popen(['python', 'test_hyperbo_plus_split_worker.py', '--group_id', group_id,
+        sub_process_i = subprocess.Popen([python_cmd, worker_path, '--group_id', group_id,
                                           '--mode', 'fit_gp_params_setup_b_id', '--dataset_id', train_id, '--key_0',
                                           str(new_key[0]), '--key_1', str(new_key[1])])
         sub_process_list.append(sub_process_i)
     for sub_process_i in sub_process_list:
         sub_process_i.wait()
+    time_5 = time.time()
 
     # alpha_mle_setup_b
     print('alpha_mle_setup_b')
     new_key, key = jax.random.split(key)
     sub_process_0 = subprocess.Popen(
-        ['python', 'test_hyperbo_plus_split_worker.py', '--group_id', group_id, '--mode', 'alpha_mle_setup_b',
+        [python_cmd, worker_path, '--group_id', group_id, '--mode', 'alpha_mle_setup_b',
          '--dataset_id', '', '--key_0', str(new_key[0]), '--key_1', str(new_key[1])])
     sub_process_0.wait()
+    time_6 = time.time()
 
     # test_bo_setup_a_id
     print('test_bo_setup_b_id')
     sub_process_list = []
     for test_id in setup_b_id_list:
         new_key, key = jax.random.split(key)
-        sub_process_i = subprocess.Popen(['python', 'test_hyperbo_plus_split_worker.py', '--group_id', group_id,
+        sub_process_i = subprocess.Popen([python_cmd, worker_path, '--group_id', group_id,
                                           '--mode', 'test_bo_setup_b_id', '--dataset_id', test_id, '--key_0',
                                           str(new_key[0]), '--key_1', str(new_key[1])])
         sub_process_list.append(sub_process_i)
     for sub_process_i in sub_process_list:
         sub_process_i.wait()
+    time_7 = time.time()
 
     # eval_nll_setup_b_train_id
     print('eval_nll_setup_b_train_id')
     sub_process_list = []
     for dataset_id in setup_b_id_list:
         new_key, key = jax.random.split(key)
-        sub_process_i = subprocess.Popen(['python', 'test_hyperbo_plus_split_worker.py', '--group_id', group_id,
+        sub_process_i = subprocess.Popen([python_cmd, worker_path, '--group_id', group_id,
                                           '--mode', 'eval_nll_setup_b_train_id', '--dataset_id', dataset_id, '--key_0',
                                           str(new_key[0]), '--key_1', str(new_key[1])])
         sub_process_list.append(sub_process_i)
     for sub_process_i in sub_process_list:
         sub_process_i.wait()
+    time_8 = time.time()
 
     # eval_nll_setup_b_test_id
     print('eval_nll_setup_b_test_id')
     sub_process_list = []
     for dataset_id in setup_b_id_list:
         new_key, key = jax.random.split(key)
-        sub_process_i = subprocess.Popen(['python', 'test_hyperbo_plus_split_worker.py', '--group_id', group_id,
+        sub_process_i = subprocess.Popen([python_cmd, worker_path, '--group_id', group_id,
                                           '--mode', 'eval_nll_setup_b_test_id', '--dataset_id', dataset_id, '--key_0',
                                           str(new_key[0]), '--key_1', str(new_key[1])])
         sub_process_list.append(sub_process_i)
     for sub_process_i in sub_process_list:
         sub_process_i.wait()
+    time_9 = time.time()
 
     # merge
     print('merge')
     new_key, key = jax.random.split(key)
     sub_process_0 = subprocess.Popen(
-        ['python', 'test_hyperbo_plus_split_worker.py', '--group_id', group_id, '--mode', 'merge',
+        [python_cmd, worker_path, '--group_id', group_id, '--mode', 'merge',
          '--dataset_id', '', '--key_0', str(new_key[0]), '--key_1', str(new_key[1])])
     sub_process_0.wait()
+    time_10 = time.time()
 
+    time_fit_gp = (time_1 - time_0) + (time_5 - time_4)
+    time_run_bo = (time_3 - time_2) + (time_7 - time_6)
+    time_eval_nll = (time_4 - time_3) + (time_9 - time_7)
+
+    print('time_fit_gp', time_fit_gp)
+    print('time_run_bo', time_run_bo)
+    print('time_eval_nll', time_eval_nll)
     print('done')
-

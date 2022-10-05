@@ -591,8 +591,6 @@ def split_test_bo_setup_a_id(dir_path, key, test_id, dataset_func_combined, cov_
         else:
             raise ValueError('Unknown ac_func_type: {}'.format(ac_func_type))
 
-        results[ac_func_type] = {}
-
         dataset = dataset_func_combined(test_id)
 
         new_key, key = jax.random.split(key)
@@ -602,7 +600,7 @@ def split_test_bo_setup_a_id(dir_path, key, test_id, dataset_func_combined, cov_
         gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list = \
             test_bo(new_key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func,
                     gp_distribution_params, fixed_gp_distribution_params, None, bo_sub_sample_batch_size)
-        results[ac_func_type][test_id] = {
+        results[ac_func_type] = {
             'fixed_regrets_mean': fixed_regrets_mean,
             'fixed_regrets_std': fixed_regrets_std,
             'fixed_regrets_list': fixed_regrets_list,
@@ -647,7 +645,7 @@ def split_eval_nll_setup_a_id(dir_path, key, id, dataset_func_combined, cov_func
     np.save(os.path.join(dir_path, 'split_eval_nll_setup_a_id_{}.npy'.format(id)), results)
 
 
-def split_test_bo_setup_b_id(dir_path, key, test_id, dataset_func_split, setup_b_id_list, cov_func,
+def split_test_bo_setup_b_id(dir_path, key, test_id, dataset_func_split, cov_func,
                              budget, n_bo_runs, n_bo_gamma_samples, ac_func_type_list, fixed_gp_distribution_params,
                              bo_sub_sample_batch_size):
     results = {}
@@ -675,33 +673,30 @@ def split_test_bo_setup_b_id(dir_path, key, test_id, dataset_func_split, setup_b
         else:
             raise ValueError('Unknown ac_func_type: {}'.format(ac_func_type))
 
-        results[ac_func_type] = {}
+        _, dataset = dataset_func_split(test_id) # only use test set
 
-        for test_id in setup_b_id_list:
-            _, dataset = dataset_func_split(test_id) # only use test set
-
-            new_key, key = jax.random.split(key)
-            fixed_regrets_mean, fixed_regrets_std, fixed_regrets_list, \
-            hyperbo_regrets_mean, hyperbo_regrets_std, hyperbo_regrets_list, \
-            random_regrets_mean, random_regrets_std, random_regrets_list, \
-            gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list = \
-                test_bo(new_key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func,
-                        gp_distribution_params, fixed_gp_distribution_params, hyperbo_params_test_id,
-                        bo_sub_sample_batch_size)
-            results[ac_func_type] = {
-                'fixed_regrets_mean': fixed_regrets_mean,
-                'fixed_regrets_std': fixed_regrets_std,
-                'fixed_regrets_list': fixed_regrets_list,
-                'hyperbo_regrets_mean': hyperbo_regrets_mean,
-                'hyperbo_regrets_std': hyperbo_regrets_std,
-                'hyperbo_regrets_list': hyperbo_regrets_list,
-                'random_regrets_mean': random_regrets_mean,
-                'random_regrets_std': random_regrets_std,
-                'random_regrets_list': random_regrets_list,
-                'gamma_regrets_mean': gamma_regrets_mean,
-                'gamma_regrets_std': gamma_regrets_std,
-                'gamma_regrets_list': gamma_regrets_list,
-            }
+        new_key, key = jax.random.split(key)
+        fixed_regrets_mean, fixed_regrets_std, fixed_regrets_list, \
+        hyperbo_regrets_mean, hyperbo_regrets_std, hyperbo_regrets_list, \
+        random_regrets_mean, random_regrets_std, random_regrets_list, \
+        gamma_regrets_mean, gamma_regrets_std, gamma_regrets_list = \
+            test_bo(new_key, pool, dataset, cov_func, budget, n_bo_runs, n_bo_gamma_samples, ac_func,
+                    gp_distribution_params, fixed_gp_distribution_params, hyperbo_params_test_id,
+                    bo_sub_sample_batch_size)
+        results[ac_func_type] = {
+            'fixed_regrets_mean': fixed_regrets_mean,
+            'fixed_regrets_std': fixed_regrets_std,
+            'fixed_regrets_list': fixed_regrets_list,
+            'hyperbo_regrets_mean': hyperbo_regrets_mean,
+            'hyperbo_regrets_std': hyperbo_regrets_std,
+            'hyperbo_regrets_list': hyperbo_regrets_list,
+            'random_regrets_mean': random_regrets_mean,
+            'random_regrets_std': random_regrets_std,
+            'random_regrets_list': random_regrets_list,
+            'gamma_regrets_mean': gamma_regrets_mean,
+            'gamma_regrets_std': gamma_regrets_std,
+            'gamma_regrets_list': gamma_regrets_list,
+        }
     np.save(os.path.join(dir_path, 'split_test_bo_setup_b_id_{}.npy'.format(test_id)), results)
 
 
@@ -1324,7 +1319,7 @@ if __name__ == '__main__':
                                  n_bo_gamma_samples, ac_func_type_list, fixed_gp_distribution_params,
                                  bo_sub_sample_batch_size)
     elif args.mode == 'test_bo_setup_b_id':
-        split_test_bo_setup_b_id(dir_path, key, args.dataset_id, dataset_func_split, setup_b_id_list, cov_func,
+        split_test_bo_setup_b_id(dir_path, key, args.dataset_id, dataset_func_split, cov_func,
                                  budget, n_bo_runs, n_bo_gamma_samples, ac_func_type_list, fixed_gp_distribution_params,
                                  bo_sub_sample_batch_size)
     elif args.mode == 'eval_nll_setup_a_id':

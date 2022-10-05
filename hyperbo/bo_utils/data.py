@@ -769,11 +769,13 @@ def hyperbo_plus_gen_synthetic(key, n_search_space, n_funcs, n_func_dims, n_disc
 
 
 def hyperbo_plus_synthetic_dataset_combined(synthetic_data_path, search_space_index):
+    search_space_index = int(search_space_index)
     dataset_all = np.load(synthetic_data_path, allow_pickle=True).item()
     return dataset_all[search_space_index]
 
 
 def hyperbo_plus_synthetic_dataset_split(synthetic_data_path, search_space_index):
+    search_space_index = int(search_space_index)
     dataset_all = np.load(synthetic_data_path, allow_pickle=True).item()
     dataset_i = dataset_all[search_space_index]
     train_subdatasets = {}
