@@ -58,11 +58,11 @@ kernel_list = [
 if __name__ == '__main__':
     key = jax.random.PRNGKey(0)
 
-    dataset_id = '4'
+    dataset_id = '5'
     n_search_space = 20
-    n_funcs = [10 for i in range(n_search_space)]
-    n_func_dims = list(np.random.randint(low=2, high=6, size=n_search_space))
-    n_discrete_points = [300 for i in range(n_search_space)]
+    n_funcs = [60 for i in range(n_search_space)]
+    n_func_dims = list(np.random.randint(low=5, high=15, size=n_search_space))
+    n_discrete_points = [1000 for i in range(n_search_space)]
     cov_func = kernel_list[0][1]
     cov_func_name = kernel_list[0][0]
 

@@ -149,8 +149,10 @@ def simulated_bayesopt_with_gp_params_samples(key,
                              queried_sub_dataset,
                              ac_func,
                              iters,
-                             n_bo_gp_params_samples):
+                             n_bo_gp_params_samples,
+                             padding_len=None):
   # print('simulated_bayesopt_gamma start')
+  # time_0 = time.time()
   model = gp.GP(
     dataset=dataset,
     mean_func=mean_func,
@@ -161,9 +163,35 @@ def simulated_bayesopt_with_gp_params_samples(key,
   constants, lengthscales, signal_variances, noise_variances = gp_params_samples
 
   # print('iters start')
+  # time_1 = time.time()
+  # print('time 0-1:', time_1 - time_0)
+
+  # eval_time_list = []
+  # construct_time_list = []
+  # ac_time_o_list = []
+  # exp_time_o_list = []
+  # argmax_time_list = []
+  # update_time_list = []
+
+  params_j_list = []
+  for j in range(n_bo_gp_params_samples):
+      constant_j = constants[j:j + 1]
+      lengthscale_j = lengthscales[j * n_dim:(j + 1) * n_dim]
+      signal_variance_j = signal_variances[j:j + 1]
+      noise_variance_j = noise_variances[j:j + 1]
+      params_j_list.append(jnp.concatenate((constant_j, lengthscale_j, signal_variance_j, noise_variance_j)))
+
+  true_len = queried_sub_dataset.x.shape[0]
+  if padding_len is None:
+      padding_len = true_len
+  else:
+      padding_len = max(padding_len, true_len)
+  gap_len = padding_len - true_len
+  x_queries_padded = jnp.concatenate((queried_sub_dataset.x, jnp.zeros((gap_len, n_dim))))
 
   for i in range(iters):
     # print(f'iter {i}')
+    # time_2 = time.time()
 
     '''
     evals_list = []
@@ -195,6 +223,7 @@ def simulated_bayesopt_with_gp_params_samples(key,
         evals_list.append(evals)
     '''
 
+    # @jax.jit
     def new_acfun(params_j):
         params_sample = defs.GPParams(
             model={
@@ -206,10 +235,12 @@ def simulated_bayesopt_with_gp_params_samples(key,
         )
         # set params
         model.params = params_sample
+        # time_0 = time.time()
         evals = ac_func(
             model=model,
             sub_dataset_key=sub_dataset_key,
-            x_queries=queried_sub_dataset.x)
+            x_queries=x_queries_padded)
+        # time_1 = time.time()
         p_dataset_theta = jnp.exp(-obj.neg_log_marginal_likelihood(
             mean_func=model.mean_func,
             cov_func=model.cov_func,
@@ -217,30 +248,104 @@ def simulated_bayesopt_with_gp_params_samples(key,
             dataset=model.dataset,  # there is only one sub_dataset which is the active observation list
             warp_func=None
         ))
+        # time_2 = time.time()
 
         # P(dataset | theta)
         evals *= p_dataset_theta
+        # return evals, time_1 - time_0, time_2 - time_1, p_dataset_theta
         return evals
+
+    '''
+    evals_list = []
+    for k in range(10):
+        params_j_list = []
+        # for j in range(k*10, (k+1)*10):
+        for j in range(0, 10):
+            # for j in range(n_bo_gp_params_samples):
+            constant_j = constants[i * n_bo_gp_params_samples + j:i * n_bo_gp_params_samples + j + 1]
+            lengthscale_j = lengthscales[i * n_bo_gp_params_samples * n_dim + j * n_dim:i * n_bo_gp_params_samples *
+                                         n_dim + (j + 1) * n_dim]
+            signal_variance_j = signal_variances[i * n_bo_gp_params_samples + j:i * n_bo_gp_params_samples + j + 1]
+            noise_variance_j = noise_variances[i * n_bo_gp_params_samples + j:i * n_bo_gp_params_samples + j + 1]
+            params_j_list.append(jnp.concatenate((constant_j, lengthscale_j, signal_variance_j, noise_variance_j)))
+
+        params_j_list = jnp.stack(params_j_list)
+        evals_list = []
+        ac_time_list = []
+        exp_time_list = []
+        p_dataset_theta_list = []
+        for params_j in params_j_list:
+            eval_j, ac_time_j, exp_time_j, p_dataset_theta_j = new_acfun(params_j)
+            evals_list.append(eval_j)
+            ac_time_list.append(ac_time_j)
+            exp_time_list.append(exp_time_j)
+            p_dataset_theta_list.append(p_dataset_theta_j)
+        ac_time_o_list.append(np.sum(ac_time_list))
+        exp_time_o_list.append(np.sum(exp_time_list))
+
+        # for params_j in params_j_list:
+        #     evals_list.append(new_acfun(params_j))
+        evals_list += list(jax.vmap(new_acfun)(jnp.array(params_j_list)))
+
+    time_c1 = time.time()
 
     params_j_list = []
     for j in range(n_bo_gp_params_samples):
         constant_j = constants[i * n_bo_gp_params_samples + j:i * n_bo_gp_params_samples + j + 1]
         lengthscale_j = lengthscales[i * n_bo_gp_params_samples * n_dim + j * n_dim:i * n_bo_gp_params_samples *
-                                     n_dim + (j + 1) * n_dim]
+                                                                                    n_dim + (j + 1) * n_dim]
         signal_variance_j = signal_variances[i * n_bo_gp_params_samples + j:i * n_bo_gp_params_samples + j + 1]
         noise_variance_j = noise_variances[i * n_bo_gp_params_samples + j:i * n_bo_gp_params_samples + j + 1]
         params_j_list.append(jnp.concatenate((constant_j, lengthscale_j, signal_variance_j, noise_variance_j)))
+    
+    time_c2 = time.time()
+    construct_time_list.append(time_c2 - time_c1)
+    '''
+
     evals_list = list(jax.vmap(new_acfun)(jnp.array(params_j_list)))
 
-    # print('evals done')
-    evals = jnp.mean(jnp.stack(evals_list), axis=0)
-    select_idx = evals.argmax()
+    # evals_list = []
+    # for params_j in params_j_list:
+    #     evals_list.append(new_acfun(params_j))
+
+    '''
+    evals_list = []
+    ac_time_list = []
+    exp_time_list = []
+    p_dataset_theta_list = []
+    for params_j in params_j_list:
+        eval_j, ac_time_j, exp_time_j, p_dataset_theta_j = new_acfun(params_j)
+        evals_list.append(eval_j)
+        ac_time_list.append(ac_time_j)
+        exp_time_list.append(exp_time_j)
+        p_dataset_theta_list.append(p_dataset_theta_j)
+    ac_time_o_list.append(np.sum(ac_time_list))
+    exp_time_o_list.append(np.sum(exp_time_list))
+
+    print('evals done')
+    time_3 = time.time()
+    print('time 2-3:', time_3 - time_2)
+    eval_time_list.append(time_3 - time_2)
+    # print('p_dataset_theta_list:', p_dataset_theta_list)
+    '''
+
+    evals = jnp.sum(jnp.stack(evals_list), axis=0)
+    select_idx = evals[:true_len].argmax()
+
+    # print('select_idx done')
+    # time_4 = time.time()
+    # print('time 3-4:', time_4 - time_3)
+    # argmax_time_list.append(time_4 - time_3)
+
     eval_datapoint = queried_sub_dataset.x[select_idx], queried_sub_dataset.y[
         select_idx]
     model.update_sub_dataset(
         eval_datapoint, sub_dataset_key=sub_dataset_key, is_append=True)
 
     # print('update done')
+    # time_5 = time.time()
+    # print('time 4-5:', time_5 - time_4)
+    # update_time_list.append(time_5 - time_4)
 
     '''
     if 'retrain' in model.params.config and model.params.config['retrain'] > 0:
@@ -253,9 +358,20 @@ def simulated_bayesopt_with_gp_params_samples(key,
         model.train()
     '''
 
-  # print('simulated_bayesopt_gamma end')
-  return model.dataset.get(sub_dataset_key,
-                           SubDataset(jnp.empty(0), jnp.empty(0)))
+  '''
+  print('simulated_bayesopt_gamma end')
+  time_6 = time.time()
+  print('time 5-6:', time_6 - time_5)
+  print('mean eval time:', np.mean(eval_time_list))
+  print('mean ac time:', np.mean(ac_time_o_list))
+  print('mean exp time:', np.mean(exp_time_o_list))
+  print('mean construct time:', np.mean(construct_time_list))
+  print('mean argmax time:', np.mean(argmax_time_list))
+  print('mean update time:', np.mean(update_time_list))
+  input()
+  '''
+
+  return model.dataset.get(sub_dataset_key, SubDataset(jnp.empty(0), jnp.empty(0)))
 
 
 def run_synthetic(dataset,
@@ -371,7 +487,8 @@ def run_bo_with_gp_params_samples(key,
                  gp_params_samples,
                  ac_func,
                  iters,
-                 n_bo_gp_params_samples):
+                 n_bo_gp_params_samples,
+                 padding_len=None):
     sub_dataset = simulated_bayesopt_with_gp_params_samples(
         key=key,
         n_dim=n_dim,
@@ -383,7 +500,8 @@ def run_bo_with_gp_params_samples(key,
         queried_sub_dataset=queried_sub_dataset,
         ac_func=ac_func,
         iters=iters,
-        n_bo_gp_params_samples=n_bo_gp_params_samples
+        n_bo_gp_params_samples=n_bo_gp_params_samples,
+        padding_len=padding_len
     )
     return (sub_dataset.x, sub_dataset.y)
 

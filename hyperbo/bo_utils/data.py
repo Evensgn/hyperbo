@@ -786,3 +786,13 @@ def hyperbo_plus_synthetic_dataset_split(synthetic_data_path, search_space_index
         test_subdatasets[key] = dataset_i[key]
     return train_subdatasets, test_subdatasets
 
+
+def hpob_converted_dataset_combined(converted_data_path, search_space_index):
+    dataset_all = np.load(converted_data_path, allow_pickle=True).item()
+    return dataset_all['combined'][search_space_index]
+
+
+def hpob_converted_dataset_split(converted_data_path, search_space_index):
+    dataset_all = np.load(converted_data_path, allow_pickle=True).item()
+    return dataset_all['train'][search_space_index], dataset_all['test'][search_space_index]
+

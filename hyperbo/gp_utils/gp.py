@@ -276,6 +276,7 @@ def infer_parameters_return_loss(mean_func,
     dataset_iter = data_utils.sub_sample_dataset_iterator(
         subkey, dataset, batch_size)
     model_param = params.model
+    init_loss = loss_func(model_param, next(dataset_iter))
     for i in range(maxiter):
       batch = next(dataset_iter)
       current_loss, grads = jax.value_and_grad(loss_func)(model_param, batch)
@@ -294,6 +295,7 @@ def infer_parameters_return_loss(mean_func,
             warp_func=warp_func,
             params_save_file=params_save_file)
     current_loss = loss_func(model_param, batch)
+    after_loss = current_loss
     if jnp.isfinite(current_loss):
       params.model = model_param
     params_utils.log_params_loss(
@@ -303,7 +305,7 @@ def infer_parameters_return_loss(mean_func,
         warp_func=warp_func,
         params_save_file=params_save_file)
   else:
-    # @jit
+    @jit
     def loss_func(model_params):
       return objective(
           mean_func=mean_func,
@@ -349,11 +351,10 @@ def infer_parameters_return_loss(mean_func,
           loss=current_loss,
           warp_func=warp_func,
           params_save_file=params_save_file)
-      return params, init_loss, after_loss
     else:
       raise ValueError(f'Optimization method {method} is not supported.')
   params.cache = {}
-  return params
+  return params, init_loss, after_loss
 
 
 def sample_from_gp(key,
