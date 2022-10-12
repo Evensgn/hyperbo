@@ -552,7 +552,7 @@ def hpob_dataset(search_space_index,
   return dataset, test_dataset_id, SubDataset(x=test_x, y=test_y)
 
 
-def hpob_dataset_v2(search_space_index, output_log_warp=False):
+def hpob_dataset_v2(search_space_index, negative_y=False, output_log_warp=False):
     """Load the original finite hpob dataset by search space.
     Args:
       search_space_index: string of a search space. See https://arxiv.org/pdf/2106.06257.pdf Table 3 for reference.
@@ -571,6 +571,8 @@ def hpob_dataset_v2(search_space_index, output_log_warp=False):
     else:
         raise ValueError('search_space_index must be str.')
 
+    y_sgn = -1 if negative_y else 1
+
     dataset_ids = list(handler.meta_test_data[search_space].keys())
 
     dataset = {}
@@ -578,7 +580,7 @@ def hpob_dataset_v2(search_space_index, output_log_warp=False):
 
     for dataset_id in dataset_ids:
         test_x = np.array(handler.meta_test_data[search_space][dataset_id]['X'])
-        test_y = np.array(handler.meta_test_data[search_space][dataset_id]['y'])
+        test_y = y_sgn * np.array(handler.meta_test_data[search_space][dataset_id]['y'])
         if output_log_warp:
             test_y = output_warper(test_y)
         dataset[dataset_id] = SubDataset(x=test_x, y=test_y)
@@ -586,7 +588,7 @@ def hpob_dataset_v2(search_space_index, output_log_warp=False):
     return dataset
 
 
-def hpob_dataset_v3(search_space_index, output_log_warp=False, validation=False):
+def hpob_dataset_v3(search_space_index, negative_y=False, output_log_warp=False):
     """Load the original finite hpob dataset by search space.
     Args:
       search_space_index: string of a search space. See https://arxiv.org/pdf/2106.06257.pdf Table 3 for reference.
@@ -605,6 +607,8 @@ def hpob_dataset_v3(search_space_index, output_log_warp=False, validation=False)
     else:
         raise ValueError('search_space_index must be str.')
 
+    y_sgn = -1 if negative_y else 1
+
     train_dataset_ids = list(handler.meta_train_data[search_space].keys())
     validation_dataset_ids = list(handler.meta_validation_data[search_space].keys())
     test_dataset_ids = list(handler.meta_test_data[search_space].keys())
@@ -614,7 +618,7 @@ def hpob_dataset_v3(search_space_index, output_log_warp=False, validation=False)
 
     for dataset_id in train_dataset_ids:
         x = np.array(handler.meta_train_data[search_space][dataset_id]['X'])
-        y = np.array(handler.meta_train_data[search_space][dataset_id]['y'])
+        y = y_sgn * np.array(handler.meta_train_data[search_space][dataset_id]['y'])
         if output_log_warp:
             y = output_warper(y)
         train_dataset[dataset_id] = SubDataset(x=x, y=y)
@@ -622,7 +626,7 @@ def hpob_dataset_v3(search_space_index, output_log_warp=False, validation=False)
     validation_dataset = {}
     for dataset_id in validation_dataset_ids:
         x = np.array(handler.meta_validation_data[search_space][dataset_id]['X'])
-        y = np.array(handler.meta_validation_data[search_space][dataset_id]['y'])
+        y = y_sgn * np.array(handler.meta_validation_data[search_space][dataset_id]['y'])
         if output_log_warp:
             y = output_warper(y)
         validation_dataset[dataset_id] = SubDataset(x=x, y=y)
@@ -630,16 +634,15 @@ def hpob_dataset_v3(search_space_index, output_log_warp=False, validation=False)
     test_dataset = {}
     for dataset_id in test_dataset_ids:
         x = np.array(handler.meta_test_data[search_space][dataset_id]['X'])
-        y = np.array(handler.meta_test_data[search_space][dataset_id]['y'])
+        y = y_sgn * np.array(handler.meta_test_data[search_space][dataset_id]['y'])
         if output_log_warp:
             y = output_warper(y)
         test_dataset[dataset_id] = SubDataset(x=x, y=y)
 
-    if validation:
-        return train_dataset, validation_dataset
-    else:
-        return train_dataset, test_dataset
+    # init_index = handler.bo_initializations[search_space]
+    init_index = None
 
+    return {'train': train_dataset, 'validation': validation_dataset, 'test': test_dataset, 'init_index': init_index}
 
 def random(key,
            mean_func,
@@ -786,7 +789,7 @@ def hyperbo_plus_synthetic_dataset_split(synthetic_data_path, search_space_index
         train_subdatasets[key] = dataset_i[key]
     for key in keys[n_train:]:
         test_subdatasets[key] = dataset_i[key]
-    return train_subdatasets, test_subdatasets
+    return {'train': train_subdatasets, 'test': test_subdatasets}
 
 
 def hpob_converted_dataset_combined(converted_data_path, search_space_index):
@@ -796,5 +799,5 @@ def hpob_converted_dataset_combined(converted_data_path, search_space_index):
 
 def hpob_converted_dataset_split(converted_data_path, search_space_index):
     dataset_all = np.load(converted_data_path, allow_pickle=True).item()
-    return dataset_all['train'][search_space_index], dataset_all['test'][search_space_index]
+    return {'train': dataset_all['train'][search_space_index], 'test': dataset_all['test'][search_space_index]}
 

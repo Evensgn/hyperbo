@@ -1229,12 +1229,13 @@ if __name__ == '__main__':
     # test_id_list = ['6794', '7607']
     # setup_b_id_list = ['4796', '5527', '5636', '5859', '5860']
 
-    dataset_func_combined = data.hpob_dataset_v2
-    dataset_func_split = data.hpob_dataset_v3
-    extra_info = ''
-    # hpob_converted_data_path = './hpob_converted_data/sub_sample_1000.npy'
-    # dataset_func_combined = partial(data.hpob_converted_dataset_combined, hpob_converted_data_path)
-    # dataset_func_split = partial(data.hpob_converted_dataset_split, hpob_converted_data_path)
+    # dataset_func_combined = data.hpob_dataset_v2
+    # dataset_func_split = data.hpob_dataset_v3
+    # extra_info = ''
+    #
+    hpob_converted_data_path = './hpob_converted_data/sub_sample_1000.npy'
+    dataset_func_combined = partial(data.hpob_converted_dataset_combined, hpob_converted_data_path)
+    dataset_func_split = partial(data.hpob_converted_dataset_split, hpob_converted_data_path)
     # extra_info = 'hpob_converted_data_path = \'{}\''.format(hpob_converted_data_path)
 
     '''

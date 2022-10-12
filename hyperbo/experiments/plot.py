@@ -15,15 +15,23 @@ def plot_performance_curve(ax, label, regrets_mean, regrets_std, time_list, log_
     ax.fill_between(time_list, err_low, err_high, alpha=0.2, color=line.get_color())
 
 
-def plot_performance_curve_percentile(ax, label, regrets_all, time_list, log_plot=False):
-    regrets_mean = np.mean(regrets_all, axis=0)
+def plot_performance_curve_percentile(ax, label, regrets_all, time_list, n_init_obs=0, log_plot=False):
+    '''
+    regrets_middle = np.median(regrets_all, axis=0)
     err_low = np.percentile(regrets_all, 25, axis=0)
     err_high = np.percentile(regrets_all, 75, axis=0)
+    '''
+
+    regrets_all = regrets_all[:, n_init_obs:]
+
+    regrets_middle = np.mean(regrets_all, axis=0)
+    err_low = regrets_middle - np.std(regrets_all, axis=0)
+    err_high = regrets_middle + np.std(regrets_all, axis=0)
 
     if log_plot:
-        line = ax.semilogy(time_list, regrets_mean, label=label)[0]
+        line = ax.semilogy(time_list, regrets_middle, label=label)[0]
     else:
-        line = ax.plot(time_list, regrets_mean, label=label)[0]
+        line = ax.plot(time_list, regrets_middle, label=label)[0]
     ax.fill_between(time_list, err_low, err_high, alpha=0.2, color=line.get_color())
 
 
@@ -128,16 +136,19 @@ def plot_hyperbo_plus(results):
     dir_path = os.path.join('results', experiment_name)
     time_list = range(1, results['budget'] + 1)
     ac_func_type_list = results['ac_func_type_list']
+    n_init_obs = results['n_init_obs']
 
     for ac_func_type in ac_func_type_list:
         # setup a
         results_a = results['setup_a']
         fig, ax = plt.subplots(nrows=1, ncols=1)
-        ax.set_xlabel('BO iteration')
-        ax.set_ylabel('average best sample simple regret')
-        plot_performance_curve_percentile(ax, 'fixed', results_a['bo_results_total'][ac_func_type]['fixed_regrets_all_list'], time_list)
-        plot_performance_curve_percentile(ax, 'random', results_a['bo_results_total'][ac_func_type]['random_regrets_all_list'], time_list)
-        plot_performance_curve_percentile(ax, 'hyperbo+', results_a['bo_results_total'][ac_func_type]['gamma_regrets_all_list'], time_list)
+        ax.set_xlabel('Number of BO Iterations')
+        ax.set_ylabel('Average Normalized Simple Regret')
+        plot_performance_curve_percentile(ax, 'Misspecified', results_a['bo_results_total'][ac_func_type]['fixed_regrets_all_list'], time_list, n_init_obs)
+        plot_performance_curve_percentile(ax, 'Random', results_a['bo_results_total'][ac_func_type]['random_regrets_all_list'], time_list, n_init_obs)
+        plot_performance_curve_percentile(ax, 'Hyperbo+', results_a['bo_results_total'][ac_func_type]['gamma_regrets_all_list'], time_list, n_init_obs)
+        if results['gt_gp_distribution_params']:
+            plot_performance_curve_percentile(ax, 'Ground-truth', results_a['bo_results_total'][ac_func_type]['gt_regrets_all_list'], time_list, n_init_obs)
         ax.legend()
         fig.savefig(os.path.join(dir_path, '{}_setup_a_regret_vs_iteration.pdf'.format(ac_func_type)))
         plt.close(fig)
@@ -145,22 +156,25 @@ def plot_hyperbo_plus(results):
         # setup b
         results_b = results['setup_b']
         fig, ax = plt.subplots(nrows=1, ncols=1)
-        ax.set_xlabel('BO iteration')
-        ax.set_ylabel('average best sample simple regret')
-        plot_performance_curve_percentile(ax, 'fixed', results_b['bo_results_total'][ac_func_type]['fixed_regrets_all_list'],
-                                          time_list)
-        plot_performance_curve_percentile(ax, 'random', results_b['bo_results_total'][ac_func_type]['random_regrets_all_list'], time_list)
-        plot_performance_curve_percentile(ax, 'hyperbo+', results_b['bo_results_total'][ac_func_type]['gamma_regrets_all_list'],
-                                          time_list)
-        plot_performance_curve_percentile(ax, 'hyperbo', results_b['bo_results_total'][ac_func_type]['hyperbo_regrets_all_list'],
-                                          time_list)
+        ax.set_xlabel('Number of BO Iterations')
+        ax.set_ylabel('Average Normalized Simple Regret')
+        plot_performance_curve_percentile(ax, 'Misspecified', results_b['bo_results_total'][ac_func_type]['fixed_regrets_all_list'],
+                                          time_list, n_init_obs)
+        plot_performance_curve_percentile(ax, 'Random', results_b['bo_results_total'][ac_func_type]['random_regrets_all_list'], time_list, n_init_obs)
+        plot_performance_curve_percentile(ax, 'Hyperbo+', results_b['bo_results_total'][ac_func_type]['gamma_regrets_all_list'],
+                                          time_list, n_init_obs)
+        plot_performance_curve_percentile(ax, 'Hyperbo', results_b['bo_results_total'][ac_func_type]['hyperbo_regrets_all_list'],
+                                          time_list, n_init_obs)
+        if results['gt_gp_distribution_params']:
+            plot_performance_curve_percentile(ax, 'Ground-truth', results_b['bo_results_total'][ac_func_type]['gt_regrets_all_list'],
+                                              time_list, n_init_obs)
         ax.legend()
         fig.savefig(os.path.join(dir_path, '{}_setup_b_regret_vs_iteration.pdf'.format(ac_func_type)))
         plt.close(fig)
 
 
 if __name__ == '__main__':
-    results = np.load('results/test_hyperbo_plus_2022-09-11_08-39-05/results.npy', allow_pickle=True).item()
+    results = np.load('results/test_hyperbo_plus_split_group_id_split_synthetic_2_50_merge/results.npy', allow_pickle=True).item()
     # plot_estimated_prior(results)
     plot_hyperbo_plus(results)
 
