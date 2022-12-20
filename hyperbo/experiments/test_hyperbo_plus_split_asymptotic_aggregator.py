@@ -26,6 +26,7 @@ import math
 from tensorflow_probability.substrates.jax.distributions import Normal, Gamma
 from functools import partial
 import matplotlib.pyplot as plt
+import matplotlib
 import gc
 import subprocess
 
@@ -64,7 +65,7 @@ kernel_list = [
 
 
 def plot_for_one_param(value_list, x_label, x_list, y_label, ground_truth, save_path):
-    fig, ax = plt.subplots(nrows=1, ncols=1)
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 6))
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
 
@@ -80,7 +81,7 @@ def plot_for_one_param(value_list, x_label, x_list, y_label, ground_truth, save_
     # data = [value_list[:, i] for i in range(value_list.shape[1])]
     mean_list = np.mean(value_list, axis=1)
     data = value_list
-    ax.violinplot(data, positions=x_list, showmeans=True, widths=0.5)
+    ax.violinplot(data, positions=x_list, showmeans=True, widths=0.7)
 
     # ax.fill_between(x_list, mean_list - std_list, mean_list + std_list, alpha=0.2, color=line.get_color())
     if ground_truth is not None:
@@ -94,17 +95,60 @@ def plot_for_one_param(value_list, x_label, x_list, y_label, ground_truth, save_
     plt.close(fig)
 
 
-def plot_results(n_train_datasets_list, n_seeds, mle_distribution_params_list, nll_results_list,
-                 gt_gp_distribution_params, dir_path):
+def plot_for_one_param_distribution(x_list, value_a_list, value_b_list, x_label, y_label, ground_truth_a, ground_truth_b, dist_type, x_range, save_path):
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 6))
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    # ax.tick_params(axis='y', labelsize=9)
+
+    x = np.linspace(x_range[0], x_range[1], 100)
+    dist = dist_type(ground_truth_a, ground_truth_b)
+    ax.plot(x, dist.prob(x), color='red', alpha=0.7, label='Ground-truth')
+
+    for i in range(len(value_a_list[0])):
+        a, b = value_a_list[0][i], value_b_list[0][i]
+        dist = dist_type(a, b)
+        if i == 0:
+            ax.plot(x, dist.prob(x), color='green', alpha=0.7, label='# of Training Datasets = {}'.format(x_list[0]))
+        else:
+            ax.plot(x, dist.prob(x), color='green', alpha=0.7)
+
+    for i in range(len(value_a_list[-1])):
+        a, b = value_a_list[-1][i], value_b_list[-1][i]
+        dist = dist_type(a, b)
+        if i == 0:
+            ax.plot(x, dist.prob(x), color='blue', alpha=0.7, label='# of Training Datasets = {}'.format(x_list[-1]))
+        else:
+            ax.plot(x, dist.prob(x), color='blue', alpha=0.7)
+
+    ax.legend()
+
+    fig.savefig(save_path)
+    plt.close(fig)
+
+
+def plot_results(results, dir_path):
+    matplotlib.rc('font', size=15)
+
+    n_train_datasets_list, n_seeds, mle_distribution_params_list, nll_results_list, gt_gp_distribution_params = \
+        results['n_train_datasets_list'], results['n_seeds'], results['mle_distribution_params_list'], \
+        results['nll_results_list'], results['gt_gp_distribution_params']
+
     for param_key in gt_gp_distribution_params.keys():
         param_name = param_names[param_key]
-        ground_truth_a = gt_gp_distribution_params[param_key][0] / gt_gp_distribution_params[param_key][1]
+        ground_truth_a = gt_gp_distribution_params[param_key][0]
+        ground_truth_b = gt_gp_distribution_params[param_key][1]
 
         param_mle_a_list = []
+        param_mle_b_list = []
         for i in range(len(n_train_datasets_list)):
-            param_mle_a_list.append([x[param_key][0] / x[param_key][1] for x in mle_distribution_params_list[i]])
+            param_mle_a_list.append([x[param_key][0] for x in mle_distribution_params_list[i]])
+            param_mle_b_list.append([x[param_key][1] for x in mle_distribution_params_list[i]])
 
-        plot_for_one_param(param_mle_a_list, 'Number of Training Datasets', n_train_datasets_list, 'MLE Mean for {}'.format(param_name), ground_truth_a, os.path.join(dir_path, f'mle_mean_{param_key}_n_train_datasets.pdf'))
+        param_distribution = param_distributions[param_key]
+
+        plot_for_one_param(param_mle_a_list, 'Number of Training Datasets', n_train_datasets_list, 'Estimate of {} for {}'.format(param_distribution[1], param_name), ground_truth_a, os.path.join(dir_path, f'mle_{param_key}_n_train_datasets.pdf'))
+        plot_for_one_param_distribution(n_train_datasets_list, param_mle_a_list, param_mle_b_list, '{}'.format(param_name), 'Probability Density', ground_truth_a, ground_truth_b, param_distribution[0], param_distribution[2], os.path.join(dir_path, f'mle_distribution_{param_key}_n_train_datasets.pdf'))
 
     test_nll_mean_list = []
     for i in range(len(n_train_datasets_list)):
@@ -112,7 +156,7 @@ def plot_results(n_train_datasets_list, n_seeds, mle_distribution_params_list, n
         for j in range(n_seeds):
             test_nll_mean_list_i.append(nll_results_list[i][j]['gamma_nll_on_test_mean'])
         test_nll_mean_list.append(test_nll_mean_list_i)
-    plot_for_one_param(test_nll_mean_list, 'Number of Training Datasets', n_train_datasets_list, 'Average NLL on Test Datasets',
+    plot_for_one_param(test_nll_mean_list, 'Number of Training Datasets', n_train_datasets_list, 'NLL of Testing Datasets',
                        None, os.path.join(dir_path, f'test_nll_n_train_datasets.pdf'))
 
 
@@ -121,6 +165,13 @@ param_names = {
     'lengthscale': 'Length-scale',
     'signal_variance': 'Signal Variance',
     'noise_variance': 'Noise Variance',
+}
+
+param_distributions = {
+    'constant': [Normal, 'μ', [-1, 1]],
+    'lengthscale': [Gamma, 'α', [0, 2]],
+    'signal_variance': [Gamma, 'α', [0.5, 2]],
+    'noise_variance': [Gamma, 'α', [0, 1e-3]]
 }
 
 
@@ -180,7 +231,7 @@ if __name__ == '__main__':
 
     n_workers = 25
     n_init_obs = 5
-    budget = 100  # 50
+    budget = 50  # 50
     n_bo_runs = 5
     gp_fit_maxiter = 500  # 50000 for adam (5000 ~ 6.5 min per id), 500 for lbfgs
     n_bo_gamma_samples = 100  # 100
@@ -211,10 +262,11 @@ if __name__ == '__main__':
     gt_gp_distribution_params = None
     '''
 
+    '''
     kernel_type = kernel_list[0]
     # construct the jax random key
     key = jax.random.PRNGKey(0)
-
+    
     mle_distribution_params_list = []
     nll_results_list = []
     for n_train_datasets in n_train_datasets_list:
@@ -261,11 +313,22 @@ if __name__ == '__main__':
 
             nll_results_list[-1].append(nll_results)
 
+    results = {
+        'n_train_datasets_list': n_train_datasets_list,
+        'n_seeds': n_seeds,
+        'mle_distribution_params_list': mle_distribution_params_list,
+        'nll_results_list': nll_results_list,
+        'gt_gp_distribution_params': gt_gp_distribution_params
+    }
+
     if not os.path.exists('results'):
         os.makedirs('results')
     if not os.path.exists(aggregation_dir_path):
         os.mkdir(aggregation_dir_path)
 
-    plot_results(n_train_datasets_list, n_seeds, mle_distribution_params_list, nll_results_list,
-                 gt_gp_distribution_params, aggregation_dir_path)
+    np.save(os.path.join(aggregation_dir_path, 'results.npy'), results)
+    '''
+    results = np.load(os.path.join(aggregation_dir_path, 'results.npy'), allow_pickle=True).item()
+
+    plot_results(results, aggregation_dir_path)
 

@@ -817,7 +817,6 @@ def split_eval_nll_setup_b_id(dir_path, key, id, train_or_test, dataset_func_spl
     }
     np.save(os.path.join(dir_path, 'split_eval_nll_setup_b_{}_id_{}.npy'.format(train_or_test, id)), results)
 
-
 def split_merge(dir_path, key, group_id, extra_info, train_id_list, test_id_list,
                 setup_b_id_list, n_workers, kernel_name, cov_func, objective, opt_method, budget, n_bo_runs,
                 n_bo_gamma_samples, ac_func_type_list, gp_fit_maxiter,

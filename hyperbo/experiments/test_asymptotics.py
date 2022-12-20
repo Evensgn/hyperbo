@@ -24,6 +24,7 @@ import argparse
 import math
 from tensorflow_probability.substrates.jax.distributions import Normal, Gamma
 import matplotlib.pyplot as plt
+import matplotlib
 from test_hyperbo_plus_split_worker import fit_gp_params
 from multiprocessing import Pool
 
@@ -100,9 +101,10 @@ def run(args):
 
 
 def plot_for_one_param(value_list, x_label, x_list, y_label, ground_truth, save_path):
-    fig, ax = plt.subplots(nrows=1, ncols=1)
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(7, 5))
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
+    # ax.tick_params(axis='y', labelsize=8)
 
     value_list = np.array(value_list).squeeze()
     mean_list = np.mean(value_list, axis=0)
@@ -126,6 +128,7 @@ def plot_for_one_param(value_list, x_label, x_list, y_label, ground_truth, save_
 
 
 def plot_results(results, n_discrete_points_fixed, n_sub_datasets_list, n_sub_datasets_fixed, n_discrete_points_list, gp_params, dir_path):
+    matplotlib.rc('font', size=15)
     for param_key in gp_params.model.keys():
         param_name = param_names[param_key]
         ground_truth = gp_params.model[param_key]
@@ -139,7 +142,7 @@ def plot_results(results, n_discrete_points_fixed, n_sub_datasets_list, n_sub_da
             # param_value_list_b = [gp_params_fit_now[param_key] for gp_params_fit_now in gp_params_fit_list_b]
             # param_value_list_b_list.append(param_value_list_b)
 
-        plot_for_one_param(param_value_list_a_list, 'Number of Sub-datasets', n_sub_datasets_list, param_name, ground_truth, os.path.join(dir_path, f'{param_key}_n_sub_datasets_{n_discrete_points_fixed}_observations.pdf'))
+        plot_for_one_param(param_value_list_a_list, 'Number of Sub-datasets', n_sub_datasets_list, param_name, ground_truth, os.path.join(dir_path, f'{param_key}_n_sub_datasets_{n_discrete_points_fixed}_observations_2.pdf'))
         # plot_for_one_param(param_value_list_b_list, '# of observations', n_discrete_points_list, param_name, ground_truth, os.path.join(dir_path, f'{param_name}_n_discrete_points_{n_sub_datasets_fixed}_sub_datasets.pdf'))
 
 
