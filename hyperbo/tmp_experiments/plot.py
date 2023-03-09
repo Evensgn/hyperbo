@@ -189,7 +189,9 @@ color_map = {
     'Ground-truth': 'tab:purple',
     'Uniform-prior': 'tab:brown',
     'Hyperbo+ leaveout': 'tab:gray',
+    'BoTorch': 'tab:cyan',
     'Discrete': 'tab:pink',
+    'End-to-end': 'tab:olive',
 }
 
 line_style_map = {
@@ -535,7 +537,7 @@ def plot_hyperbo_plus_combined_all_acfuncs_added_baselines(dir_path, results_syn
     plt.close(fig)
 
 
-def plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single_ax(ax, results, results_2, dataset_name, setup, log_plot=False, results_3=None, results_4=None, ucb=False):
+def plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single_ax(ax, results, results_2, dataset_name, setup, log_plot=False, results_3=None, results_4=None, results_5=None, ucb=False):
     time_list = range(1, results['budget'] + 1)
     n_init_obs = results['n_init_obs']
 
@@ -716,21 +718,36 @@ def plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single_ax(ax, r
                                        results_4['setup_b']['bo_results_total']['ucb']['discrete_regrets_all_list'],
                                        time_list, n_init_obs, linestyle=line_style_map['ucb'], color=color_map['Discrete'],
                                        log_plot=log_plot)
+
+        if results_5 is not None:
+            plot_performance_curve(ax, 'End-to-end (PI)',
+                                   results_5['setup_b']['bo_results_total']['pi']['gamma_regrets_all_list'],
+                                   time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['End-to-end'],
+                                   log_plot=log_plot)
+            plot_performance_curve(ax, 'End-to-end (EI)',
+                                   results_5['setup_b']['bo_results_total']['ei']['gamma_regrets_all_list'],
+                                   time_list, n_init_obs, linestyle=line_style_map['ei'], color=color_map['End-to-end'],
+                                   log_plot=log_plot)
+            if ucb:
+                plot_performance_curve(ax, 'End-to-end (UCB)',
+                                       results_5['setup_b']['bo_results_total']['ucb']['gamma_regrets_all_list'],
+                                       time_list, n_init_obs, linestyle=line_style_map['ucb'], color=color_map['End-to-end'],
+                                       log_plot=log_plot)
     else:
         raise ValueError('Invalid setup, must be a or b')
 
 
-def plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single(results, results_2, dataset_name, setup, log_plot=False, results_3=None, results_4=None, ucb=False):
+def plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single(results, results_2, dataset_name, setup, log_plot=False, results_3=None, results_4=None, results_5=None, ucb=False):
     matplotlib.rc('font', size=20)
 
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(12, 8))
 
     plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single_ax(ax, results, results_2, dataset_name, setup,
-                                                                           log_plot=log_plot, results_3=results_3, results_4=results_4, ucb=ucb)
+                                                                           log_plot=log_plot, results_3=results_3, results_4=results_4, results_5=results_5, ucb=ucb)
 
     handles, labels = ax.get_legend_handles_labels()
     plt.tight_layout()
-    fig.legend(handles, labels, ncol=3, loc='upper center', bbox_to_anchor=(0.59, 0.96), fontsize=15, facecolor='white', framealpha=1)
+    fig.legend(handles, labels, ncol=3, loc='upper center', bbox_to_anchor=(0.5, 1.3), fontsize=15, facecolor='white', framealpha=1)
     fig.savefig(os.path.join(dir_path, 'ei_pi_regret_vs_iteration_{}_setup_{}_log_{}_ucb_{}.pdf'.format(dataset_name, setup, log_plot, ucb)), bbox_inches='tight')
     plt.close(fig)
 
@@ -751,8 +768,107 @@ def plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_double(results,
 
     handles, labels = ax_b.get_legend_handles_labels()
     plt.tight_layout()
-    fig.legend(handles, labels, ncol=4, loc='upper center', bbox_to_anchor=(0.5, 1.15), fontsize=15, facecolor='white', framealpha=1)
+    fig.legend(handles, labels, ncol=4, loc='upper center', bbox_to_anchor=(0.5, 1.2), fontsize=15, facecolor='white', framealpha=1)
     fig.savefig(os.path.join(dir_path, 'ei_pi_regret_vs_iteration_{}_log_{}_ucb_{}.pdf'.format(dataset_name, log_plot, ucb)), bbox_inches='tight')
+    plt.close(fig)
+
+
+def plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single_botorch(results, results_2, dataset_name, setup, log_plot=False, results_3=None):
+    matplotlib.rc('font', size=20)
+    time_list = range(1, results['budget'] + 1)
+    n_init_obs = results['n_init_obs']
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 8))
+
+    ax.set_xlabel('Number of BO Iterations')
+    ax.set_ylabel('Average Normalized Simple Regret')
+
+    if setup == 'a':
+        # setup a
+        results_a = results['setup_a']
+        plot_performance_curve(ax, 'Non-informative (PI)',
+                               results_2['setup_a']['bo_results_total']['pi']['uniform_regrets_all_list'],
+                               time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['Uniform-prior'],
+                               log_plot=log_plot)
+        plot_performance_curve(ax, 'Non-informative (EI)',
+                               results_2['setup_a']['bo_results_total']['ei']['uniform_regrets_all_list'],
+                               time_list, n_init_obs, linestyle=line_style_map['ei'], color=color_map['Uniform-prior'], log_plot=log_plot)
+
+        plot_performance_curve(ax, 'Hand-specified (PI)', results_a['bo_results_total']['pi']['fixed_regrets_all_list'], time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['Hand-specified'], log_plot=log_plot)
+
+        plot_performance_curve(ax, 'Hand-specified (EI)', results_a['bo_results_total']['ei']['fixed_regrets_all_list'],
+                               time_list, n_init_obs, linestyle=line_style_map['ei'], color=color_map['Hand-specified'], log_plot=log_plot)
+        plot_performance_curve(ax, 'Random', results_a['bo_results_total']['pi']['random_regrets_all_list'], time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['Random'], log_plot=log_plot)
+        plot_performance_curve(ax, 'HyperBO+ (PI)', results_a['bo_results_total']['pi']['gamma_regrets_all_list'], time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['Hyperbo+'], log_plot=log_plot)
+        plot_performance_curve(ax, 'HyperBO+ (EI)', results_a['bo_results_total']['ei']['gamma_regrets_all_list'], time_list,
+                               n_init_obs, linestyle=line_style_map['ei'], color=color_map['Hyperbo+'], log_plot=log_plot)
+        if results['gt_gp_distribution_params']:
+            plot_performance_curve(ax, 'Ground-truth (PI)', results_a['bo_results_total']['pi']['gt_regrets_all_list'], time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['Ground-truth'], log_plot=log_plot)
+
+        if results['gt_gp_distribution_params']:
+            plot_performance_curve(ax, 'Ground-truth (EI)', results_a['bo_results_total']['ei']['gt_regrets_all_list'],
+                                   time_list, n_init_obs, linestyle=line_style_map['ei'], color=color_map['Ground-truth'], log_plot=log_plot)
+        if results_3 is not None:
+            plot_performance_curve(ax, 'BoTorch (PI)', results_3['setup_a']['bo_results_total']['pi']['botorch_regrets_all_list'],
+                                   time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['BoTorch'],
+                                   log_plot=log_plot)
+            plot_performance_curve(ax, 'BoTorch (EI)', results_3['setup_a']['bo_results_total']['ei']['botorch_regrets_all_list'],
+                                   time_list, n_init_obs, linestyle=line_style_map['ei'], color=color_map['BoTorch'],
+                                   log_plot=log_plot)
+            plot_performance_curve(ax, 'BoTorch (UCB)',
+                                   results_3['setup_a']['bo_results_total']['ucb']['botorch_regrets_all_list'],
+                                   time_list, n_init_obs, linestyle=line_style_map['ucb'], color=color_map['BoTorch'],
+                                   log_plot=log_plot)
+    elif setup == 'b':
+        # setup b
+        results_b = results['setup_b']
+        plot_performance_curve(ax, 'Non-informative (PI)',
+                               results_2['setup_b']['bo_results_total']['pi']['uniform_regrets_all_list'],
+                               time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['Uniform-prior'], log_plot=log_plot)
+        plot_performance_curve(ax, 'Non-informative (EI)',
+                               results_2['setup_b']['bo_results_total']['ei']['uniform_regrets_all_list'],
+                               time_list, n_init_obs, linestyle=line_style_map['ei'], color=color_map['Uniform-prior'], log_plot=log_plot)
+
+        plot_performance_curve(ax, 'Hand-specified (PI)', results_b['bo_results_total']['pi']['fixed_regrets_all_list'],
+                                          time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['Hand-specified'], log_plot=log_plot)
+
+        plot_performance_curve(ax, 'Hand-specified (EI)', results_b['bo_results_total']['ei']['fixed_regrets_all_list'],
+                               time_list, n_init_obs, linestyle=line_style_map['ei'], color=color_map['Hand-specified'], log_plot=log_plot)
+        plot_performance_curve(ax, 'Random', results_b['bo_results_total']['pi']['random_regrets_all_list'], time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['Random'], log_plot=log_plot)
+        plot_performance_curve(ax, 'HyperBO+ (PI)', results_b['bo_results_total']['pi']['gamma_regrets_all_list'],
+                                          time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['Hyperbo+'], log_plot=log_plot)
+        plot_performance_curve(ax, 'HyperBO+ (EI)', results_b['bo_results_total']['ei']['gamma_regrets_all_list'],
+                               time_list, n_init_obs, linestyle=line_style_map['ei'], color=color_map['Hyperbo+'], log_plot=log_plot)
+        plot_performance_curve(ax, 'HyperBO (PI)', results_b['bo_results_total']['pi']['hyperbo_regrets_all_list'],
+                                          time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['Hyperbo'], log_plot=log_plot)
+        plot_performance_curve(ax, 'HyperBO (EI)', results_b['bo_results_total']['ei']['hyperbo_regrets_all_list'],
+                               time_list, n_init_obs, linestyle=line_style_map['ei'], color=color_map['Hyperbo'], log_plot=log_plot)
+        if results['gt_gp_distribution_params']:
+            plot_performance_curve(ax, 'Ground-truth (PI)', results_b['bo_results_total']['pi']['gt_regrets_all_list'],
+                                              time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['Ground-truth'], log_plot=log_plot)
+        if results['gt_gp_distribution_params']:
+            plot_performance_curve(ax, 'Ground-truth (EI)', results_b['bo_results_total']['ei']['gt_regrets_all_list'],
+                                   time_list, n_init_obs, linestyle=line_style_map['ei'], color=color_map['Ground-truth'], log_plot=log_plot)
+        if results_3 is not None:
+            plot_performance_curve(ax, 'BoTorch (PI)', results_3['setup_b']['bo_results_total']['pi']['botorch_regrets_all_list'],
+                                   time_list, n_init_obs, linestyle=line_style_map['pi'], color=color_map['BoTorch'],
+                                   log_plot=log_plot)
+            plot_performance_curve(ax, 'BoTorch (EI)', results_3['setup_b']['bo_results_total']['ei']['botorch_regrets_all_list'],
+                                   time_list, n_init_obs, linestyle=line_style_map['ei'], color=color_map['BoTorch'],
+                                   log_plot=log_plot)
+            plot_performance_curve(ax, 'BoTorch (UCB)',
+                                   results_3['setup_b']['bo_results_total']['ucb']['botorch_regrets_all_list'],
+                                   time_list, n_init_obs, linestyle=line_style_map['ucb'], color=color_map['BoTorch'],
+                                   log_plot=log_plot)
+        else:
+            print('No leaveout results')
+    else:
+        raise ValueError('Invalid setup, must be a or b')
+
+    handles, labels = ax.get_legend_handles_labels()
+    plt.tight_layout()
+    fig.legend(handles, labels, ncol=2, loc='upper center', bbox_to_anchor=(0.65, 1.0), fontsize=15, facecolor='white', framealpha=1)
+    fig.savefig(os.path.join(dir_path, 'ei_pi_regret_vs_iteration_{}_setup_{}_log_{}.pdf'.format(dataset_name, setup, log_plot)), bbox_inches='tight')
     plt.close(fig)
 
 
@@ -786,7 +902,158 @@ def plot_lengthscale_distribution(results, dataset_name, dir_path):
     plt.close(fig)
 
 
+def plot_lengthscale_num_of_dimensions(results, dir_path):
+    results_b = results['setup_b']
+    fit_gp_params = results_b['fit_gp_params']
+    lengthscale_map = {}
+    scatter_x = []
+    scatter_y = []
+    for dataset_id in fit_gp_params:
+        n_dim = fit_gp_params[dataset_id]['gp_params']['lengthscale'].shape[0]
+        if n_dim not in lengthscale_map:
+            lengthscale_map[n_dim] = []
+        lengthscale_values = fit_gp_params[dataset_id]['gp_params']['lengthscale']
+        for lengthscale in lengthscale_values:
+            lengthscale_map[n_dim].append(lengthscale)
+            scatter_x.append(n_dim)
+            scatter_y.append(lengthscale)
+        print('dataset_id: {}, n_dim: {}, lengthscale: {}'.format(dataset_id, n_dim, lengthscale_values))
+        print('all params: {}'.format(fit_gp_params[dataset_id]['gp_params']))
+    mean_x = []
+    mean_y = []
+    for n_dim in lengthscale_map:
+        mean_x.append(n_dim)
+    mean_x = sorted(mean_x)
+    for n_dim in mean_x:
+        mean_y.append(np.mean(lengthscale_map[n_dim]))
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 5))
+    ax.scatter(scatter_x, scatter_y, s=1, label='Length-scale Values')
+    ax.plot(mean_x, mean_y, color='red', label='Mean Length-scale')
+    ax.set_xlabel('Number of Dimensions')
+    ax.set_ylabel('Length-scale')
+    plt.legend()
+    fig.savefig(os.path.join(dir_path, 'plot_lengthscale_distribution_n_dim.pdf'),
+                bbox_inches='tight')
+    plt.close(fig)
+
+
+def plot_lengthscale_num_of_dimensions_split(results, dim_feature_values, dir_path):
+    results_b = results['setup_b']
+    fit_gp_params = results_b['fit_gp_params']
+    lengthscale_map_discrete = {}
+    lengthscale_map_continuous = {}
+    scatter_x_discrete = []
+    scatter_y_discrete = []
+    scatter_x_continuous = []
+    scatter_y_continuous = []
+    for dataset_id in fit_gp_params:
+        n_dim = fit_gp_params[dataset_id]['gp_params']['lengthscale'].shape[0]
+        dim_feature_value = dim_feature_values[dataset_id]
+        lengthscale_values = fit_gp_params[dataset_id]['gp_params']['lengthscale']
+        for dim in range(n_dim):
+            if dim_feature_value[dim][0] == 1:
+                if n_dim not in lengthscale_map_discrete:
+                    lengthscale_map_discrete[n_dim] = []
+                lengthscale_map_discrete[n_dim].append(lengthscale_values[dim])
+                scatter_x_discrete.append(n_dim)
+                scatter_y_discrete.append(lengthscale_values[dim])
+            else:
+                if n_dim not in lengthscale_map_continuous:
+                    lengthscale_map_continuous[n_dim] = []
+                lengthscale_map_continuous[n_dim].append(lengthscale_values[dim])
+                scatter_x_continuous.append(n_dim)
+                scatter_y_continuous.append(lengthscale_values[dim])
+        print('dataset_id: {}, n_dim: {}, lengthscale: {}'.format(dataset_id, n_dim, lengthscale_values))
+        print('all params: {}'.format(fit_gp_params[dataset_id]['gp_params']))
+    mean_x_discrete = []
+    mean_y_discrete = []
+    mean_x_continuous = []
+    mean_y_continuous = []
+    for n_dim in lengthscale_map_discrete:
+        mean_x_discrete.append(n_dim)
+    mean_x_discrete = sorted(mean_x_discrete)
+    for n_dim in mean_x_discrete:
+        mean_y_discrete.append(np.mean(lengthscale_map_discrete[n_dim]))
+    for n_dim in lengthscale_map_continuous:
+        mean_x_continuous.append(n_dim)
+    mean_x_continuous = sorted(mean_x_continuous)
+    for n_dim in mean_x_continuous:
+        mean_y_continuous.append(np.mean(lengthscale_map_continuous[n_dim]))
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 5))
+    ax.scatter(scatter_x_discrete, scatter_y_discrete, s=1, color='red', label='Length-scale Values (Discrete)')
+    ax.scatter(scatter_x_continuous, scatter_y_continuous, s=1, color='blue', label='Length-scale Values (Continuous)')
+    ax.plot(mean_x_discrete, mean_y_discrete, color='red', label='Mean Length-scale (Discrete)')
+    ax.plot(mean_x_continuous, mean_y_continuous, color='blue', label='Mean Length-scale (Continuous)')
+    ax.set_xlabel('Number of Dimensions')
+    ax.set_ylabel('Length-scale')
+    plt.legend()
+    fig.savefig(os.path.join(dir_path, 'plot_lengthscale_distribution_n_dim_split.pdf'),
+                bbox_inches='tight')
+    plt.close(fig)
+
+
 if __name__ == '__main__':
-    dir_path = os.path.join('../results', 'hyperbo_plus_plots')
+    '''
+    results_synthetic = np.load('results/test_hyperbo_plus_split_group_id_split_synthetic_2_50_merge/results.npy', allow_pickle=True).item()
+    results_hpob = np.load('results/test_hyperbo_plus_split_group_id_split_hpob_pos_1_50_merge/results.npy', allow_pickle=True).item()
+    results_synthetic_2 = np.load('results/test_hyperbo_plus_split_group_id_split_synthetic_uniform_prior_3_merge/results.npy',
+                                allow_pickle=True).item()
+    results_synthetic_3 = np.load(
+        'results/test_hyperbo_plus_split_group_id_split_synthetic_botorch_1_merge/results.npy',
+        allow_pickle=True).item()
+    results_synthetic_4 = np.load(
+        'results/test_hyperbo_plus_split_group_id_split_synthetic_discrete_prior_1_merge/results.npy',
+        allow_pickle=True).item()
+
+    results_hpob_2 = np.load('results/test_hyperbo_plus_split_group_id_split_hpob_uniform_prior_3_merge/results.npy',
+                           allow_pickle=True).item()
+    results_hpob_3 = np.load('results/test_hyperbo_plus_split_group_id_split_hpob_leaveout_1_merge/results.npy', allow_pickle=True).item()
+    results_hpob_4 = np.load('results/test_hyperbo_plus_split_group_id_split_hpob_discrete_prior_1_merge/results.npy', allow_pickle=True).item()
+    # plot_estimated_prior(results)
+    # plot_hyperbo_plus(results)
+    # dir_path = os.path.join('results', 'hyperbo_plus_bo_combined_all_acfuncs_add_uniform_prior_3')
+    # plot_hyperbo_plus_combined(dir_path, results_synthetic, results_hpob)
+    # plot_hyperbo_plus_combined_all_acfuncs_added_baselines(dir_path, results_synthetic, results_hpob, results_synthetic_2, results_hpob_2)
+    dir_path = os.path.join('results', 'hyperbo_plus_bo_combined_arxiv')
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
+    # plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single(results_synthetic, results_synthetic_2, 'synthetic', 'a', log_plot=False)
+    # plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single(results_synthetic, results_synthetic_2, 'synthetic', 'a', log_plot=True)
+    # plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_double(results_synthetic, results_synthetic_2, 'synthetic', log_plot=True, ucb=False)
+    # plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_double(results_synthetic, results_synthetic_2, 'synthetic', log_plot=True, ucb=True)
+    # plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single(results_hpob, results_hpob_2, 'hpob', 'b', log_plot=True, results_3=results_hpob_3, ucb=False)
+    # plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single(results_hpob, results_hpob_2, 'hpob', 'b', log_plot=True, results_3=results_hpob_3, ucb=True)
+    # plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single(results_hpob, results_hpob_2, 'hpob', 'b', log_plot=True, results_3=None)
+    # plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single_botorch(results_synthetic, results_synthetic_2, 'synthetic', 'a', log_plot=False, results_3=results_synthetic_3)
+    # plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single_botorch(results_synthetic, results_synthetic_2, 'synthetic', 'b', log_plot=False, results_3=results_synthetic_3)
+    # plot_lengthscale_distribution(results_hpob, 'hpob', dir_path)
+
+    plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_double(results_synthetic, results_synthetic_2, 'synthetic', log_plot=True, ucb=True, results_4=results_synthetic_4)
+    plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single(results_hpob, results_hpob_2, 'hpob', 'b', log_plot=True, results_3=results_hpob_3, results_4=results_hpob_4, ucb=True)
+    '''
+
+    '''
+    results_hpob = np.load('../results/hpob_normalize_xy_only_fitting_matern52/results.npy',
+                           allow_pickle=True).item()
+    dim_feature_values = np.load('../hpob-data/data_analysis.npy', allow_pickle=True).item()
+    dir_path = os.path.join('..', 'results', 'hpob_lengthscale_num_of_dimensions_normalize_xy_matern52')
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+    plot_lengthscale_num_of_dimensions_split(results_hpob, dim_feature_values, dir_path)
+    '''
+
+    dir_path = os.path.join('../results', 'results_e2e_v3_fitting_1000_and_bo')
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+
+    results_hpob = np.load('../results/test_hyperbo_plus_split_group_id_split_hpob_pos_1_50_merge/results.npy',
+                           allow_pickle=True).item()
+    results_hpob_2 = np.load('../results/test_hyperbo_plus_split_group_id_split_hpob_uniform_prior_3_merge/results.npy',
+                             allow_pickle=True).item()
+    results_hpob_3 = np.load('../results/test_hyperbo_plus_split_group_id_split_hpob_leaveout_1_merge/results.npy',
+                             allow_pickle=True).item()
+    results_hpob_4 = np.load('../results/test_hyperbo_plus_split_group_id_split_hpob_discrete_prior_1_merge/results.npy', allow_pickle=True).item()
+    results_hpob_5 = np.load('../results/test_hyperbo_plus_split/split_hpob_e2e_v3_fitting_1000_and_bo/merge/results.npy', allow_pickle=True).item()
+    plot_hyperbo_plus_split_combined_all_acfuncs_added_baselines_single(results_hpob, results_hpob_2, 'hpob', 'b', log_plot=True, results_3=results_hpob_3, results_4=results_hpob_4, results_5=results_hpob_5, ucb=True)

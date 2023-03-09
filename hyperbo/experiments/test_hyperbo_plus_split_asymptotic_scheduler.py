@@ -70,7 +70,7 @@ if __name__ == '__main__':
     # separation
 
     python_cmd = '/home/azureuser/hyperbo/env-pd/bin/python'
-    worker_path = '/home/azureuser/hyperbo/hyperbo/experiments/test_hyperbo_plus_split_worker.py'
+    worker_path = '/home/azureuser/hyperbo/hyperbo/experiments/test_hyperbo_plus_split_worker_old.py'
 
     '''
     # train_id_list = ['5860', '5906']

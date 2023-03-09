@@ -29,7 +29,7 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from tensorflow.io import gfile
-from tensorflow_probability.substrates.jax.distributions import Normal, Gamma
+from tensorflow_probability.substrates.jax.distributions import Normal, Gamma, LogNormal
 from hyperbo.gp_utils import mean
 
 
@@ -44,7 +44,7 @@ PD1 = {
     ('phase1', 'unmatched'): '../pd1/pd1_unmatched_phase1_results.jsonl',
 }
 
-HPOB_ROOT_DIR = './hpob-data/'
+# HPOB_ROOT_DIR = './../hpob-data/'
 
 
 def get_aligned_dataset(trials,
@@ -552,7 +552,10 @@ def hpob_dataset(search_space_index,
   return dataset, test_dataset_id, SubDataset(x=test_x, y=test_y)
 
 
-def hpob_dataset_v2(search_space_index, negative_y=False, output_log_warp=False):
+NORMALIAZTION_EPS = 1e-12
+
+
+def hpob_dataset_v2(search_space_index, hpob_data_path=None, negative_y=False, output_log_warp=False, normalize_x=True, normalize_y=True):
     """Load the original finite hpob dataset by search space.
     Args:
       search_space_index: string of a search space. See https://arxiv.org/pdf/2106.06257.pdf Table 3 for reference.
@@ -564,14 +567,12 @@ def hpob_dataset_v2(search_space_index, negative_y=False, output_log_warp=False)
     # Make sure the hpob folder is also in your directory
     from hyperbo.bo_utils import hpob_handler
 
-    handler = hpob_handler.HPOBHandler(root_dir=HPOB_ROOT_DIR, mode='v2')
+    handler = hpob_handler.HPOBHandler(root_dir=hpob_data_path, mode='v2')
 
     if isinstance(search_space_index, str):
         search_space = search_space_index
     else:
         raise ValueError('search_space_index must be str.')
-
-    y_sgn = -1 if negative_y else 1
 
     dataset_ids = list(handler.meta_test_data[search_space].keys())
 
@@ -579,16 +580,26 @@ def hpob_dataset_v2(search_space_index, negative_y=False, output_log_warp=False)
     output_warper = get_output_warper(output_log_warp)
 
     for dataset_id in dataset_ids:
-        test_x = np.array(handler.meta_test_data[search_space][dataset_id]['X'])
-        test_y = y_sgn * np.array(handler.meta_test_data[search_space][dataset_id]['y'])
+        x = np.array(handler.meta_test_data[search_space][dataset_id]['X'])
+        y = np.array(handler.meta_test_data[search_space][dataset_id]['y'])
+
+        if normalize_x:
+            x_max, x_min = np.max(x, axis=0), np.min(x, axis=0)
+            x = (x - x_min) / (x_max - x_min + NORMALIAZTION_EPS)
+        if normalize_y:
+            y_max, y_min = np.max(y), np.min(y)
+            y = (y - y_min) / (y_max - y_min + NORMALIAZTION_EPS)
+        if negative_y:
+            y *= -1
         if output_log_warp:
-            test_y = output_warper(test_y)
-        dataset[dataset_id] = SubDataset(x=test_x, y=test_y)
+            y = output_warper(y)
+
+        dataset[dataset_id] = SubDataset(x=x, y=y)
 
     return dataset
 
 
-def hpob_dataset_v3(search_space_index, negative_y=False, output_log_warp=False):
+def hpob_dataset_v3(search_space_index, hpob_data_path=None, negative_y=False, output_log_warp=False, normalize_x=True, normalize_y=True):
     """Load the original finite hpob dataset by search space.
     Args:
       search_space_index: string of a search space. See https://arxiv.org/pdf/2106.06257.pdf Table 3 for reference.
@@ -600,43 +611,71 @@ def hpob_dataset_v3(search_space_index, negative_y=False, output_log_warp=False)
     # Make sure the hpob folder is also in your directory
     from hyperbo.bo_utils import hpob_handler
 
-    handler = hpob_handler.HPOBHandler(root_dir=HPOB_ROOT_DIR, mode='v3')
+    handler = hpob_handler.HPOBHandler(root_dir=hpob_data_path, mode='v3')
 
     if isinstance(search_space_index, str):
         search_space = search_space_index
     else:
         raise ValueError('search_space_index must be str.')
 
-    y_sgn = -1 if negative_y else 1
-
     train_dataset_ids = list(handler.meta_train_data[search_space].keys())
     validation_dataset_ids = list(handler.meta_validation_data[search_space].keys())
     test_dataset_ids = list(handler.meta_test_data[search_space].keys())
 
-    train_dataset = {}
     output_warper = get_output_warper(output_log_warp)
 
+    train_dataset = {}
     for dataset_id in train_dataset_ids:
         x = np.array(handler.meta_train_data[search_space][dataset_id]['X'])
-        y = y_sgn * np.array(handler.meta_train_data[search_space][dataset_id]['y'])
+        y = np.array(handler.meta_train_data[search_space][dataset_id]['y'])
+
+        if normalize_x:
+            x_max, x_min = np.max(x, axis=0), np.min(x, axis=0)
+            x = (x - x_min) / (x_max - x_min + NORMALIAZTION_EPS)
+        if normalize_y:
+            y_max, y_min = np.max(y), np.min(y)
+            y = (y - y_min) / (y_max - y_min + NORMALIAZTION_EPS)
+        if negative_y:
+            y *= -1
         if output_log_warp:
             y = output_warper(y)
+
         train_dataset[dataset_id] = SubDataset(x=x, y=y)
 
     validation_dataset = {}
     for dataset_id in validation_dataset_ids:
         x = np.array(handler.meta_validation_data[search_space][dataset_id]['X'])
-        y = y_sgn * np.array(handler.meta_validation_data[search_space][dataset_id]['y'])
+        y = np.array(handler.meta_validation_data[search_space][dataset_id]['y'])
+
+        if normalize_x:
+            x_max, x_min = np.max(x, axis=0), np.min(x, axis=0)
+            x = (x - x_min) / (x_max - x_min + NORMALIAZTION_EPS)
+        if normalize_y:
+            y_max, y_min = np.max(y), np.min(y)
+            y = (y - y_min) / (y_max - y_min + NORMALIAZTION_EPS)
+        if negative_y:
+            y *= -1
         if output_log_warp:
             y = output_warper(y)
+
         validation_dataset[dataset_id] = SubDataset(x=x, y=y)
 
     test_dataset = {}
     for dataset_id in test_dataset_ids:
         x = np.array(handler.meta_test_data[search_space][dataset_id]['X'])
-        y = y_sgn * np.array(handler.meta_test_data[search_space][dataset_id]['y'])
+        y = np.array(handler.meta_test_data[search_space][dataset_id]['y'])
+
+        if normalize_x:
+            x_max, x_min = np.max(x, axis=0), np.min(x, axis=0)
+            x = (x - x_min) / (x_max - x_min + NORMALIAZTION_EPS)
+        if normalize_y:
+            y_max, y_min = np.max(y), np.min(y)
+            y = (y - y_min) / (y_max - y_min + NORMALIAZTION_EPS)
+        if negative_y:
+            y *= -1
         if output_log_warp:
             y = output_warper(y)
+
         test_dataset[dataset_id] = SubDataset(x=x, y=y)
 
     # init_index = handler.bo_initializations[search_space]
@@ -712,6 +751,10 @@ def generate_param_from_prior(key, num_samples, prior_params, prior_type='gamma'
         normal_mu, normal_sigma = prior_params[0], prior_params[1]
         normal = Normal(normal_mu, normal_sigma)
         thetas = normal.sample(num_samples, seed=key)
+    elif prior_type == 'lognormal':
+        lognormal_mu, lognormal_sigma = prior_params[0], prior_params[1]
+        lognormal = LogNormal(lognormal_mu, lognormal_sigma)
+        thetas = lognormal.sample(num_samples, seed=key)
     else:
         raise ValueError('prior_type {} not supported.'.format(prior_type))
     return thetas
@@ -771,13 +814,27 @@ def hyperbo_plus_gen_synthetic(key, n_search_space, n_funcs, n_func_dims, n_disc
     return synthetic_data, (constants, ls, sig_vars, noise_vars)
 
 
-def hyperbo_plus_synthetic_dataset_combined(synthetic_data_path, search_space_index):
+def hyperbo_plus_synthetic_dataset_combined(synthetic_data_path, search_space_index, normalize_x=True, normalize_y=True):
     search_space_index = int(search_space_index)
     dataset_all = np.load(synthetic_data_path, allow_pickle=True).item()
-    return dataset_all[search_space_index]
+
+    dataset = dataset_all[search_space_index]
+
+    for sub_dataset_key in dataset.keys():
+        x = dataset[sub_dataset_key].x
+        y = dataset[sub_dataset_key].y
+        if normalize_x:
+            x_max, x_min = np.max(x, axis=0), np.min(x, axis=0)
+            x = (x - x_min) / (x_max - x_min + NORMALIAZTION_EPS)
+        if normalize_y:
+            y_max, y_min = np.max(y), np.min(y)
+            y = (y - y_min) / (y_max - y_min + NORMALIAZTION_EPS)
+        dataset[sub_dataset_key] = SubDataset(x=x, y=y)
+
+    return dataset
 
 
-def hyperbo_plus_synthetic_dataset_split(synthetic_data_path, search_space_index):
+def hyperbo_plus_synthetic_dataset_split(synthetic_data_path, search_space_index, normalize_x=True, normalize_y=True):
     search_space_index = int(search_space_index)
     dataset_all = np.load(synthetic_data_path, allow_pickle=True).item()
     dataset_i = dataset_all[search_space_index]
@@ -789,6 +846,29 @@ def hyperbo_plus_synthetic_dataset_split(synthetic_data_path, search_space_index
         train_subdatasets[key] = dataset_i[key]
     for key in keys[n_train:]:
         test_subdatasets[key] = dataset_i[key]
+
+    for sub_dataset_key in train_subdatasets.keys():
+        x = train_subdatasets[sub_dataset_key].x
+        y = train_subdatasets[sub_dataset_key].y
+        if normalize_x:
+            x_max, x_min = np.max(x, axis=0), np.min(x, axis=0)
+            x = (x - x_min) / (x_max - x_min + NORMALIAZTION_EPS)
+        if normalize_y:
+            y_max, y_min = np.max(y), np.min(y)
+            y = (y - y_min) / (y_max - y_min + NORMALIAZTION_EPS)
+        train_subdatasets[sub_dataset_key] = SubDataset(x=x, y=y)
+
+    for sub_dataset_key in test_subdatasets.keys():
+        x = test_subdatasets[sub_dataset_key].x
+        y = test_subdatasets[sub_dataset_key].y
+        if normalize_x:
+            x_max, x_min = np.max(x, axis=0), np.min(x, axis=0)
+            x = (x - x_min) / (x_max - x_min + NORMALIAZTION_EPS)
+        if normalize_y:
+            y_max, y_min = np.max(y), np.min(y)
+            y = (y - y_min) / (y_max - y_min + NORMALIAZTION_EPS)
+        test_subdatasets[sub_dataset_key] = SubDataset(x=x, y=y)
+
     return {'train': train_subdatasets, 'test': test_subdatasets}
 
 
@@ -800,4 +880,3 @@ def hpob_converted_dataset_combined(converted_data_path, search_space_index):
 def hpob_converted_dataset_split(converted_data_path, search_space_index):
     dataset_all = np.load(converted_data_path, allow_pickle=True).item()
     return {'train': dataset_all['train'][search_space_index], 'test': dataset_all['test'][search_space_index]}
-

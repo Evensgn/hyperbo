@@ -9,6 +9,7 @@ from hyperbo.bo_utils import bayesopt
 from hyperbo.bo_utils import data
 from hyperbo.gp_utils import basis_functions as bf
 from hyperbo.gp_utils import gp
+from hyperbo.gp_utils import gp_added_v2
 from hyperbo.gp_utils import kernel
 from hyperbo.gp_utils import mean
 from hyperbo.gp_utils import objectives as obj
@@ -28,6 +29,7 @@ from functools import partial
 import matplotlib.pyplot as plt
 import gc
 import scipy
+from experiment_defs import RESULTS_DIR
 
 
 DEFAULT_WARP_FUNC = utils.DEFAULT_WARP_FUNC
@@ -817,6 +819,7 @@ def split_eval_nll_setup_b_id(dir_path, key, id, train_or_test, dataset_func_spl
     }
     np.save(os.path.join(dir_path, 'split_eval_nll_setup_b_{}_id_{}.npy'.format(train_or_test, id)), results)
 
+
 def split_merge(dir_path, key, group_id, extra_info, random_seed, train_id_list, test_id_list,
                 setup_b_id_list, kernel_name, cov_func, objective, opt_method, budget, n_bo_runs,
                 n_bo_gamma_samples, ac_func_type_list, gp_fit_maxiter,
@@ -1227,18 +1230,16 @@ def split_merge(dir_path, key, group_id, extra_info, random_seed, train_id_list,
     '''
 
     # save all results
-    dir_path = os.path.join('results', experiment_name)
-    if not os.path.exists('results'):
-        os.makedirs('results')
-    if not os.path.exists(dir_path):
-        os.mkdir(dir_path)
-    np.save(os.path.join(dir_path, 'results.npy'), results)
+    merge_path = os.path.join(dir_path, 'merge')
+    if not os.path.exists(merge_path):
+        os.mkdir(merge_path)
+    np.save(os.path.join(merge_path, 'results.npy'), results)
 
     # generate plots
     # plot.plot_hyperbo_plus(results)
 
     # write part of results to text file
-    with open(os.path.join(dir_path, 'results.txt'), 'w') as f:
+    with open(os.path.join(merge_path, 'results.txt'), 'w') as f:
         f.write('experiment_name = {}\n'.format(experiment_name))
         f.write('extra_info = {}\n'.format(extra_info))
         f.write('random_seed = {}\n'.format(random_seed))
@@ -1409,6 +1410,100 @@ def split_merge(dir_path, key, group_id, extra_info, random_seed, train_id_list,
     print('done.')
 
 
+def fit_hierarchical_gp_params_e2e(key, super_dataset, dim_feature_values, cov_func, objective, opt_method, gp_fit_maxiter,
+                                   fit_gp_batch_size, adam_learning_rate, n_fit_hgp_gamma_samples):
+    # minimize nll
+    init_params = GPParams(
+        model={
+            'constant_params': (1.0, 1.0),  # Normal (mean, std)
+            'signal_variance_params': (1.0, 1.0),  # LogNormal (mean, std)
+            'noise_variance_params': (1.0, 1.0),  # LogNormal (mean, std)
+        },
+        config={
+            'method': opt_method,
+            'maxiter': gp_fit_maxiter,
+            'logging_interval': 10,
+            'objective': objective,
+            'batch_size': fit_gp_batch_size,
+            'learning_rate': adam_learning_rate,
+            'n_gamma_samples': n_fit_hgp_gamma_samples,
+        })
+
+    # initialize constant, signal variance, and noise variance
+    new_key, key = jax.random.split(key)
+    init_params.model['constant_params'] = jax.random.normal(new_key, (2,))
+    new_key, key = jax.random.split(key)
+    init_params.model['signal_variance_params'] = jax.random.normal(new_key, (2,))
+    new_key, key = jax.random.split(key)
+    init_params.model['noise_variance_params'] = jax.random.normal(new_key, (2,))
+
+    # initialize the lengthscale mlp
+    init_params.config['lengthscale_mlp_features'] = (2,)
+    new_key, key = jax.random.split(key)
+    init_val = jnp.ones((0, 4), jnp.float32)
+    init_params.model['lengthscale_mlp_params'] = bf.MLP(init_params.config['lengthscale_mlp_features']).init(
+        new_key, init_val)['params']
+
+    warp_func = None
+    mean_func = mean.constant
+
+    model = gp_added_v2.HGP_E2E_v2(
+        super_dataset=super_dataset,
+        dim_feature_values=dim_feature_values,
+        mean_func=mean_func,
+        cov_func=cov_func,
+        params=init_params,
+        warp_func=warp_func)
+
+    init_key, key = jax.random.split(key)
+
+    model.initialize_params(init_key)
+
+    init_nll = None
+    params_save_file = os.path.join(dir_path, 'params_save.npy')
+    new_key, key = jax.random.split(key)
+    inferred_params = model.train(key=new_key, params_save_file=params_save_file)
+    inferred_nll = None
+
+    param_keys = init_params.model.keys()
+    retrieved_inferred_params = dict(
+        zip(param_keys, retrieve_params(inferred_params, param_keys, warp_func=warp_func)))
+    print('retrieved_inferred_params = {}'.format(retrieved_inferred_params))
+
+    print('init_nll = {}, inferred_nll = {}'.format(init_nll, inferred_nll))
+
+    # assert (init_nll > inferred_nll)
+
+    nll_logs = (init_nll, inferred_nll)
+
+    gc.collect()
+
+    return retrieved_inferred_params, nll_logs
+
+
+def split_fit_hierarchical_gp_params_e2e(dir_path, key, setup, train_id_list, dataset_func_combined, dataset_func_split,
+                                         dataset_dim_feature_values_path,
+                                         cov_func, objective, opt_method, gp_fit_maxiter, fit_gp_batch_size,
+                                         adam_learning_rate, n_fit_hgp_gamma_samples):
+    super_dataset = {}
+    for train_id in train_id_list:
+        if setup == 'a':
+            dataset = dataset_func_combined(train_id)
+        elif setup == 'b':
+            dataset = dataset_func_split(train_id)['train']  # only use training set
+        else:
+            raise ValueError('setup = {} not supported'.format(setup))
+        super_dataset[train_id] = dataset
+
+    dim_feature_values = np.load(dataset_dim_feature_values_path, allow_pickle=True).item()
+    new_key, key = jax.random.split(key)
+    gp_params, nll_logs = fit_hierarchical_gp_params_e2e(new_key, super_dataset, dim_feature_values, cov_func, objective, opt_method,
+                                                         gp_fit_maxiter, fit_gp_batch_size, adam_learning_rate,
+                                                         n_fit_hgp_gamma_samples)
+    results = {'gp_params': gp_params, 'nll_logs': nll_logs}
+    np.save(os.path.join(dir_path, 'split_fit_hierarchical_gp_params_e2e_setup_{}.npy'.format(setup)), results)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Test HyperBO+ split.')
 
@@ -1419,7 +1514,7 @@ if __name__ == '__main__':
     parser.add_argument('--key_1', default=0, type=int, help='key 1')
     args = parser.parse_args()
 
-    dir_path = os.path.join('results', 'test_hyperbo_plus_split', args.group_id)
+    dir_path = os.path.join(RESULTS_DIR, 'test_hyperbo_plus_split', args.group_id)
 
     # construct the jax random key
     key = jnp.array([args.key_0, args.key_1], dtype=jnp.uint32)
@@ -1433,11 +1528,13 @@ if __name__ == '__main__':
     setup_b_id_list = configs['setup_b_id_list']
     dataset_func_combined = configs['dataset_func_combined']
     dataset_func_split = configs['dataset_func_split']
+    dataset_dim_feature_values_path = configs['dataset_dim_feature_values_path']
     extra_info = configs['extra_info']
     n_init_obs = configs['n_init_obs']
     budget = configs['budget']
     n_bo_runs = configs['n_bo_runs']
     gp_fit_maxiter = configs['gp_fit_maxiter']
+    n_fit_hgp_gamma_samples = configs['n_fit_hgp_gamma_samples']
     n_bo_gamma_samples = configs['n_bo_gamma_samples']
     n_nll_gamma_samples = configs['n_nll_gamma_samples']
     setup_a_nll_sub_dataset_level = configs['setup_a_nll_sub_dataset_level']
@@ -1493,6 +1590,10 @@ if __name__ == '__main__':
                     fixed_gp_distribution_params, gt_gp_distribution_params,
                     n_nll_gamma_samples, setup_a_nll_sub_dataset_level, fit_gp_batch_size, bo_sub_sample_batch_size,
                     adam_learning_rate, eval_nll_batch_size, eval_nll_n_batches)
+    elif args.mode == 'fit_hierarchical_gp_params_e2e_setup_b':
+        split_fit_hierarchical_gp_params_e2e(dir_path, key, 'b', setup_b_id_list, dataset_func_combined, dataset_func_split,
+                                             dataset_dim_feature_values_path,
+                               cov_func, objective, opt_method, gp_fit_maxiter, fit_gp_batch_size, adam_learning_rate, n_fit_hgp_gamma_samples)
     else:
         raise ValueError('Unknown mode: {}'.format(args.mode))
 

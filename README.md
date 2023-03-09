@@ -1,8 +1,15 @@
 This repo is built based on the codebase of [HyperBO](https://github.com/google-research/hyperbo). We made several modifications to some original files to expand its utility and added new files under the `hyperbo/experiments` folder.
 
 ## Usage of HyperBO+
-- Synthetic data generation: see `python3 hyperbo/experiments/synthetic_data_generation.py`. This script generates synthetic data for the experiments of HyperBO+. Parameters of data-generation including the save path of the generated file are configured in the script.
-- Run HyperBO+ experiments: see `python3 hyperbo/experiments/run_hyperbo_plus.py`. This script runs the experiments of HyperBO+. Hyper-parameters of the experiments are configured in the script. Set the `synthetic_data_path` to the path of the generated synthetic data file.
+
+- Synthetic Super-dataset generation: see `hyperbo/experiments/synthetic_data_generation.py`. This script generates the Synthetic Super-dataset for the experiments of HyperBO+. Parameters of data-generation including the save path of the generated file are configured in the script.
+- Run HyperBO+ experiments: see `hyperbo/experiments/test_hyperbo_plus_split_scheduler.py`. This script runs the experiments of HyperBO+. Hyper-parameters of the experiments are configured in the script. This file calls `hyperbo/experiments/test_hyperbo_plus_split_worker.py` using multiprocessing to run the experiments in parallel.
+- Worker functions of HyperBO+ experiments: see `hyperbo/experiments/test_hyperbo_plus_split_worker.py`. This file contains the worker functions of the experiments of HyperBO+. The worker functions are called by `hyperbo/experiments/test_hyperbo_plus_split_scheduler.py` using multiprocessing.
+- Plotting functions of BO performance curves: see `hyperbo/experiments/plot.py`.
+- Test the asymptotic behavior of fitting a single GP: see `hyperbo/experiments/test_asymptotics.py`.
+- Test the asymptotic behavior of the two-step pre-training of HyperBO+ on the Synthetic Super-dataset: see `hyperbo/experiments/test_hyperbo_plus_split_asymptotic_scheduler.py` and `hyperbo/experiments/test_hyperbo_plus_split_asymptotic_aggregator.py`.
+- Visualize the NLL evaluations in Setup B per search space: see `hyperbo/experiments/test_hyperbo_plus_split_check_per_dataset.py`.
+- Dataset loaders for the Synthetic Super-dataset and HPO-B Super-dataset: see `hyperbo/bo_utils/data.py`. Define the file path to the HPO-B Super-dataset in this file.
 
 The remaining part of this README document is copied from the original repo except from slight modification to the installation instructions.
 

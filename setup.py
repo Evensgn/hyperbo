@@ -29,7 +29,8 @@ setup(
         'tensorflow_probability',
         'tensorflow>=2.5.0',
         'xgboost',
-        'pathos'
+        'pathos',
+        'botorch',
     ],
     extras_require={},
     classifiers=[
