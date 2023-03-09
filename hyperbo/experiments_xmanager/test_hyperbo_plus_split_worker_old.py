@@ -9,6 +9,7 @@ from hyperbo.bo_utils import bayesopt
 from hyperbo.bo_utils import data
 from hyperbo.gp_utils import basis_functions as bf
 from hyperbo.gp_utils import gp
+from hyperbo.gp_utils import gp_added_v2
 from hyperbo.gp_utils import kernel
 from hyperbo.gp_utils import mean
 from hyperbo.gp_utils import objectives as obj
@@ -28,6 +29,7 @@ from functools import partial
 import matplotlib.pyplot as plt
 import gc
 import scipy
+from experiment_defs import RESULTS_DIR
 
 
 DEFAULT_WARP_FUNC = utils.DEFAULT_WARP_FUNC
@@ -817,6 +819,7 @@ def split_eval_nll_setup_b_id(dir_path, key, id, train_or_test, dataset_func_spl
     }
     np.save(os.path.join(dir_path, 'split_eval_nll_setup_b_{}_id_{}.npy'.format(train_or_test, id)), results)
 
+
 def split_merge(dir_path, key, group_id, extra_info, random_seed, train_id_list, test_id_list,
                 setup_b_id_list, kernel_name, cov_func, objective, opt_method, budget, n_bo_runs,
                 n_bo_gamma_samples, ac_func_type_list, gp_fit_maxiter,
@@ -1227,18 +1230,16 @@ def split_merge(dir_path, key, group_id, extra_info, random_seed, train_id_list,
     '''
 
     # save all results
-    dir_path = os.path.join('results', experiment_name)
-    if not os.path.exists('results'):
-        os.makedirs('results')
-    if not os.path.exists(dir_path):
-        os.mkdir(dir_path)
-    np.save(os.path.join(dir_path, 'results.npy'), results)
+    merge_path = os.path.join(dir_path, 'merge')
+    if not os.path.exists(merge_path):
+        os.mkdir(merge_path)
+    np.save(os.path.join(merge_path, 'results.npy'), results)
 
     # generate plots
     # plot.plot_hyperbo_plus(results)
 
     # write part of results to text file
-    with open(os.path.join(dir_path, 'results.txt'), 'w') as f:
+    with open(os.path.join(merge_path, 'results.txt'), 'w') as f:
         f.write('experiment_name = {}\n'.format(experiment_name))
         f.write('extra_info = {}\n'.format(extra_info))
         f.write('random_seed = {}\n'.format(random_seed))
@@ -1272,7 +1273,6 @@ def split_merge(dir_path, key, group_id, extra_info, random_seed, train_id_list,
         f.write('gp_distribution_params = {}\n'.format(results_a['gp_distribution_params']))
         f.write('\n')
 
-        '''
         for ac_func_type in ac_func_type_list:
             f.write('ac_func_type = {}\n'.format(ac_func_type))
             for test_id in test_id_list:
@@ -1313,7 +1313,6 @@ def split_merge(dir_path, key, group_id, extra_info, random_seed, train_id_list,
             f.write('gamma_regrets_std_total = {}\n'.format(
                 results_a['bo_results_total'][ac_func_type]['gamma_regrets_std']))
             f.write('\n')
-        '''
 
         f.write('\n\n setup b \n')
         for train_id in setup_b_id_list:
@@ -1323,7 +1322,6 @@ def split_merge(dir_path, key, group_id, extra_info, random_seed, train_id_list,
         f.write('gp_distribution_params = {}\n'.format(results_b['gp_distribution_params']))
         f.write('\n')
 
-        '''
         for ac_func_type in ac_func_type_list:
             f.write('ac_func_type = {}\n'.format(ac_func_type))
             for test_id in setup_b_id_list:
@@ -1404,7 +1402,6 @@ def split_merge(dir_path, key, group_id, extra_info, random_seed, train_id_list,
         f.write('gt_nll_on_train_std = {}\n'.format(results_b['nll_results']['gt_nll_on_train_std']))
         f.write('gamma_nll_on_train_std = {}\n'.format(results_b['nll_results']['gamma_nll_on_train_std']))
         f.write('hyperbo_nll_on_train_std = {}\n'.format(results_b['nll_results']['hyperbo_nll_on_train_std']))
-        '''
 
     print('done.')
 
@@ -1419,7 +1416,7 @@ if __name__ == '__main__':
     parser.add_argument('--key_1', default=0, type=int, help='key 1')
     args = parser.parse_args()
 
-    dir_path = os.path.join('results', 'test_hyperbo_plus_split', args.group_id)
+    dir_path = os.path.join(RESULTS_DIR, 'test_hyperbo_plus_split', args.group_id)
 
     # construct the jax random key
     key = jnp.array([args.key_0, args.key_1], dtype=jnp.uint32)
@@ -1433,6 +1430,7 @@ if __name__ == '__main__':
     setup_b_id_list = configs['setup_b_id_list']
     dataset_func_combined = configs['dataset_func_combined']
     dataset_func_split = configs['dataset_func_split']
+    dataset_dim_feature_values_path = configs['dataset_dim_feature_values_path']
     extra_info = configs['extra_info']
     n_init_obs = configs['n_init_obs']
     budget = configs['budget']

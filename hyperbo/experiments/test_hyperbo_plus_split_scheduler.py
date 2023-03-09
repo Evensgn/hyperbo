@@ -64,11 +64,10 @@ kernel_list = [
 
 
 if __name__ == '__main__':
-    group_id = 'split_synthetic_2_50' #  'split_hpob_neg_2'
-    python_cmd = '/home/azureuser/hyperbo/env-pd/bin/python'
-    worker_path = '/home/azureuser/hyperbo/hyperbo/experiments/test_hyperbo_plus_split_worker.py'
+    group_id = 'split_hpob_normalize_xy_only_fitting'  # 'split_hpob_neg_2'
+    python_cmd = '/home/zfan/hyperbo/env-pd/bin/python'
+    worker_path = '/home/zfan/hyperbo/hyperbo/experiments/test_hyperbo_plus_split_worker_old.py'
 
-    '''
     # train_id_list = ['5860', '5906']
     # test_id_list = ['5889']
     # train_id_list = ['4796', '5527', '5636', '5859', '5860', '5891', '5906', '5965', '5970', '5971', '6766', '6767']
@@ -91,9 +90,13 @@ if __name__ == '__main__':
     # setup_b_id_list = ['4796', '5527', '5636', '5859', '5860']
 
     hpob_negative_y = False
-    dataset_func_combined = partial(data.hpob_dataset_v2, negative_y=hpob_negative_y)
-    dataset_func_split = partial(data.hpob_dataset_v3, negative_y=hpob_negative_y)
-    extra_info = 'hpob_negative_y_{}'.format(hpob_negative_y)
+    normalize_x = True
+    normalize_y = True
+    dataset_func_combined = partial(data.hpob_dataset_v2, negative_y=hpob_negative_y, normalize_x=normalize_x,
+                                    normalize_y=normalize_y)
+    dataset_func_split = partial(data.hpob_dataset_v3, negative_y=hpob_negative_y, normalize_x=normalize_x,
+                                 normalize_y=normalize_y)
+    extra_info = 'hpob_negative_y_{}_noramlize_x_{}_normalize_y_{}'.format(hpob_negative_y, normalize_x, normalize_y)
 
     # hpob_converted_data_path = './hpob_converted_data/sub_sample_1000.npy'
     # dataset_func_combined = partial(data.hpob_converted_dataset_combined, hpob_converted_data_path)
@@ -116,12 +119,13 @@ if __name__ == '__main__':
     dataset_func_combined = partial(data.hyperbo_plus_synthetic_dataset_combined, synthetic_data_path)
     dataset_func_split = partial(data.hyperbo_plus_synthetic_dataset_split, synthetic_data_path)
     extra_info = 'synthetic_data_path = \'{}\''.format(synthetic_data_path)
+    '''
 
-    n_workers = 25
+    random_seed = 0
     n_init_obs = 5
     budget = 50  # 50
     n_bo_runs = 5
-    gp_fit_maxiter = 500  # 50000 for adam (5000 ~ 6.5 min per id), 500 for lbfgs
+    gp_fit_maxiter = 10000  # 50000 for adam (5000 ~ 6.5 min per id), 500 for lbfgs
     n_bo_gamma_samples = 100  # 100
     n_nll_gamma_samples = 500  # 500
     setup_a_nll_sub_dataset_level = True
@@ -139,6 +143,7 @@ if __name__ == '__main__':
         'noise_variance': (10.0, 100.0)
     }
 
+    '''
     # ground truth for synthetic 4
     gt_gp_distribution_params = {
         'constant': (1.0, 1.0),
@@ -148,7 +153,6 @@ if __name__ == '__main__':
     }
     '''
     gt_gp_distribution_params = None
-    '''
 
     kernel_type = kernel_list[0]
 
@@ -161,17 +165,17 @@ if __name__ == '__main__':
         os.mkdir(dir_path)
 
     # construct the jax random key
-    key = jax.random.PRNGKey(0)
+    key = jax.random.PRNGKey(random_seed)
 
     # write configs
     configs = {
+        'random_seed': random_seed,
         'train_id_list': train_id_list,
         'test_id_list': test_id_list,
         'setup_b_id_list': setup_b_id_list,
         'dataset_func_combined': dataset_func_combined,
         'dataset_func_split': dataset_func_split,
         'extra_info': extra_info,
-        'n_workers': n_workers,
         'n_init_obs': n_init_obs,
         'budget': budget,
         'n_bo_runs': n_bo_runs,
@@ -188,12 +192,11 @@ if __name__ == '__main__':
         'fixed_gp_distribution_params': fixed_gp_distribution_params,
         'gt_gp_distribution_params': gt_gp_distribution_params,
         'kernel_type': kernel_type
-    }
+      }
     np.save(os.path.join(dir_path, 'configs.npy'), configs)
 
     time_0 = time.time()
 
-    '''
     # fit_gp_params_setup_a_id
     print('fit_gp_params_setup_a_id')
     sub_process_list = []
@@ -303,6 +306,7 @@ if __name__ == '__main__':
     for sub_process_i in sub_process_list:
         sub_process_i.wait()
     time_9 = time.time()
+    '''
 
     # merge
     print('merge')
@@ -314,6 +318,7 @@ if __name__ == '__main__':
     time_10 = time.time()
 
     '''
+    
     time_fit_gp = (time_4 - time_0) / 3600
     time_run_bo = (time_6 - time_4) / 3600
     time_eval_nll = (time_9 - time_6) / 3600
@@ -323,5 +328,3 @@ if __name__ == '__main__':
     print('time_eval_nll', time_eval_nll)
     print('done')
     '''
-
-

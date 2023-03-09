@@ -18,11 +18,14 @@
 import logging
 
 from hyperbo.basics import params_utils
+from hyperbo.gp_utils import utils
 
 import jax
 from jax.custom_derivatives import custom_vjp
 import jax.numpy as jnp
 import jax.scipy.linalg as jspla
+from hyperbo.gp_utils import basis_functions as bf
+from hyperbo.basics import definitions as defs
 
 vmap = jax.vmap
 EPS = 1e-10
@@ -74,6 +77,143 @@ def solve_gp_linear_system(mean_func,
       params, ['noise_variance'], warp_func=warp_func)
   cov = cov_func(
       params, x, warp_func=warp_func) + jnp.eye(len(x)) * (
+          noise_variance + eps)
+  chol, kinvy = solve_linear_system(cov, y)
+  return chol, kinvy, y
+
+
+def solve_gp_linear_system_hgp_v2(key,
+                                  mean_func,
+                                  cov_func,
+                                  params,
+                                  dim_feature_value,
+                                  x,
+                                  y,
+                                  warp_func=None,
+                                  eps=1e-6):
+  """Solve a linear system specified by a GP.
+
+  This function solves m + Kv = y using the Cholesky decomposition of K, where
+  K is the covariance matrix with noise terms on the diagonal entries, and m is
+  the mean values.
+
+  Args:
+    mean_func: mean function handle that maps from (params, n x d input,
+      warp_func) to an n dimensional mean vector. (see vector_map in mean.py for
+      more details).
+    cov_func: covariance function handle that maps from (params, n1 x d input1,
+      n2 x d input2, wrap_func) to a n1 x n2  covariance matrix (see matrix_map
+      in kernel.py for more details).
+    params: parameters for the GP.
+    x: n x d dimensional input array for n data points.
+    y: n x 1 dimensional evaluation array for n data points.
+    warp_func: optional dictionary that specifies the warping function for each
+      parameter.
+    eps: extra value added to the diagonal of the covariance matrix for
+      numerical stability.
+
+  Returns:
+    chol: Cholesky decomposition of K (gram matrix).
+    kinvy: a convenient intermediate value, K inverse times y, where y has
+    already subtracted mean.
+    y: y value with mean subtracted.
+  """
+  n_dim = x.shape[1]
+
+  # sample constant from Normal distribution
+  (constant_mu, constant_sigma), = params_utils.retrieve_params(
+        params, ['constant_params'], warp_func=warp_func)
+  constant_sigma = utils.softplus_warp(constant_sigma)
+  new_key, key = jax.random.split(key)
+  standard_normal_sample = jax.random.normal(new_key, shape=(1,))
+  constant = constant_mu + constant_sigma * standard_normal_sample
+
+  # sample noise variance from LogNormal distribution
+  (noise_variance_mu, noise_variance_sigma), = params_utils.retrieve_params(
+      params, ['noise_variance_params'], warp_func=warp_func)
+  noise_variance_sigma = utils.softplus_warp(noise_variance_sigma)
+  new_key, key = jax.random.split(key)
+  standard_normal_sample = jax.random.normal(new_key, shape=(1,))
+  noise_variance = jnp.exp(noise_variance_mu + noise_variance_sigma * standard_normal_sample)
+
+  # sample signal variance from LogNormal distribution
+  (signal_variance_mu, signal_variance_sigma), = params_utils.retrieve_params(
+    params, ['signal_variance_params'], warp_func=warp_func)
+  signal_variance_sigma = utils.softplus_warp(signal_variance_sigma)
+  new_key, key = jax.random.split(key)
+  standard_normal_sample = jax.random.normal(new_key, shape=(1,))
+  signal_variance = jnp.exp(signal_variance_mu + signal_variance_sigma * standard_normal_sample)
+
+  # sample lengthscale from LogNormal distribution
+  lengthscale_model = bf.MLP(params.config['lengthscale_mlp_features'])
+  lengthscale_mlp_params, = params_utils.retrieve_params(params, ['lengthscale_mlp_params'], warp_func)
+  lengthscale_dist_params = lengthscale_model.apply({'params': lengthscale_mlp_params}, dim_feature_value)
+  lengthscale_mu, lengthscale_sigma = lengthscale_dist_params[:, 0], lengthscale_dist_params[:, 1]
+  lengthscale_sigma = utils.softplus_warp(lengthscale_sigma)
+  new_key, key = jax.random.split(key)
+  standard_normal_sample = jax.random.normal(new_key, shape=(n_dim,))
+  lengthscale = jnp.exp(lengthscale_mu + lengthscale_sigma * standard_normal_sample)
+
+  sample_params = defs.GPParams(
+        model={
+            'constant': constant[0],
+            'noise_variance': noise_variance[0],
+            'signal_variance': signal_variance[0],
+            'lengthscale': lengthscale,
+        },
+        config=params.config)
+  y = y - jnp.atleast_2d(mean_func(sample_params, x, warp_func=None))
+  cov = cov_func(
+      sample_params, x, warp_func=None) + jnp.eye(len(x)) * (
+          noise_variance + eps)
+  chol, kinvy = solve_linear_system(cov, y)
+  return chol, kinvy, y
+
+
+def solve_gp_linear_system_hpg_v3(mean_func,
+                                  cov_func,
+                                  params,
+                                  dataset_key,
+                                  x,
+                                  y,
+                                  single_gp_warp_func=None,
+                                  eps=1e-6):
+  """Solve a linear system specified by a GP.
+
+  This function solves m + Kv = y using the Cholesky decomposition of K, where
+  K is the covariance matrix with noise terms on the diagonal entries, and m is
+  the mean values.
+
+  Args:
+    mean_func: mean function handle that maps from (params, n x d input,
+      warp_func) to an n dimensional mean vector. (see vector_map in mean.py for
+      more details).
+    cov_func: covariance function handle that maps from (params, n1 x d input1,
+      n2 x d input2, wrap_func) to a n1 x n2  covariance matrix (see matrix_map
+      in kernel.py for more details).
+    params: parameters for the GP.
+    x: n x d dimensional input array for n data points.
+    y: n x 1 dimensional evaluation array for n data points.
+    warp_func: optional dictionary that specifies the warping function for each
+      parameter.
+    eps: extra value added to the diagonal of the covariance matrix for
+      numerical stability.
+
+  Returns:
+    chol: Cholesky decomposition of K (gram matrix).
+    kinvy: a convenient intermediate value, K inverse times y, where y has
+    already subtracted mean.
+    y: y value with mean subtracted.
+  """
+  dataset_params = defs.GPParams(
+    model=params.model['search_space_params'][dataset_key],
+    config=params.config,
+  )
+  y = y - jnp.atleast_2d(mean_func(dataset_params, x, warp_func=single_gp_warp_func))
+  noise_variance, = params_utils.retrieve_params(
+      dataset_params, ['noise_variance'], warp_func=single_gp_warp_func)
+  cov = cov_func(
+      dataset_params, x, warp_func=single_gp_warp_func) + jnp.eye(len(x)) * (
           noise_variance + eps)
   chol, kinvy = solve_linear_system(cov, y)
   return chol, kinvy, y

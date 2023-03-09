@@ -787,6 +787,6 @@ def plot_lengthscale_distribution(results, dataset_name, dir_path):
 
 
 if __name__ == '__main__':
-    dir_path = os.path.join('../results', 'hyperbo_plus_plots')
+    dir_path = os.path.join('results', 'hyperbo_plus_plots')
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)

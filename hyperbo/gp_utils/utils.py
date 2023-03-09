@@ -21,6 +21,10 @@ from hyperbo.basics import definitions as defs
 from hyperbo.basics import linalg
 import jax
 import jax.numpy as jnp
+import tensorflow_probability.substrates.jax as tfp
+import scipy
+from functools import partial
+
 
 # import jax._src.dtypes as dtypes
 
@@ -31,6 +35,7 @@ EPS = 1e-10
 
 identity_warp = lambda x: x
 softplus_warp = jax.nn.softplus
+softplus_inverse_warp = tfp.math.softplus_inverse
 
 
 def sub_sample_dataset_iterator(key, dataset, batch_size):
@@ -87,6 +92,82 @@ DEFAULT_WARP_FUNC_LC_ONLY = {
     'signal_variance': identity_warp,
     'noise_variance': identity_warp,
 }
+
+
+def apply_warp_func(params, warp_func):
+    warpped_params = {}
+    for key, value in params.items():
+        if key in warp_func:
+            warpped_params[key] = warp_func[key](value)
+        else:
+            warpped_params[key] = value
+    return warpped_params
+
+
+single_gp_default_warp_func = {
+    'constant': identity_warp,
+    'lengthscale': lambda x: softplus_warp(x) + EPS,
+    'signal_variance': lambda x: softplus_warp(x) + EPS,
+    'noise_variance': lambda x: softplus_warp(x) + EPS,
+}
+
+single_gp_default_inverse_warp_func = {
+    'constant': identity_warp,
+    'lengthscale': lambda x: softplus_inverse_warp(x - EPS),
+    'signal_variance': lambda x: softplus_inverse_warp(x - EPS),
+    'noise_variance': lambda x: softplus_inverse_warp(x - EPS),
+}
+
+normal_params_warp = lambda x: (x[0], softplus_warp(x[1]) + EPS)
+lognormal_params_warp = normal_params_warp
+gamma_params_warp = lambda x: (softplus_warp(x[0]) + EPS, softplus_warp(x[1]) + EPS)
+
+normal_params_inverse_warp = lambda x: (x[0], softplus_inverse_warp(x[1] - EPS))
+lognormal_params_inverse_warp = normal_params_inverse_warp
+gamma_params_inverse_warp = lambda x: (softplus_inverse_warp(x[0] - EPS), softplus_inverse_warp(x[1] - EPS))
+
+
+def search_space_params_warp(search_space_params, single_gp_warp_func):
+    warpped_search_space_params = {}
+    for key, value in search_space_params.items():
+        warpped_search_space_params[key] = apply_warp_func(value, single_gp_warp_func)
+    return warpped_search_space_params
+
+
+def search_space_params_inverse_warp(search_space_params, single_gp_inverse_warp_func):
+    warpped_search_space_params = {}
+    for key, value in search_space_params.items():
+        warpped_search_space_params[key] = apply_warp_func(value, single_gp_inverse_warp_func)
+    return warpped_search_space_params
+
+
+def get_e2e_v3_warp_func(distribution_type, single_gp_warp_func, single_gp_inverse_warp_func):
+    if distribution_type == 'lognormal':
+        dist_params_warp = lognormal_params_warp
+        dist_params_inverse_warp = lognormal_params_inverse_warp
+    elif distribution_type == 'gamma':
+        dist_params_warp = gamma_params_warp
+        dist_params_inverse_warp = gamma_params_inverse_warp
+    else:
+        raise ValueError('distribution_type must be lognormal or gamma.')
+
+    e2e_v3_warp_func = {
+        'constant_normal_params': normal_params_warp,
+        'signal_variance_{}_params'.format(distribution_type): dist_params_warp,
+        'noise_variance_{}_params'.format(distribution_type): dist_params_warp,
+        'search_space_params': partial(search_space_params_warp, single_gp_warp_func=single_gp_warp_func),
+    }
+
+    e2e_v3_inverse_warp_func = {
+        'constant_normal_params': normal_params_inverse_warp,
+        'signal_variance_{}_params'.format(distribution_type): dist_params_inverse_warp,
+        'noise_variance_{}_params'.format(distribution_type): dist_params_inverse_warp,
+        'search_space_params': partial(search_space_params_inverse_warp,
+                                       single_gp_inverse_warp_func=single_gp_inverse_warp_func),
+    }
+
+    return e2e_v3_warp_func, e2e_v3_inverse_warp_func
+
 
 def kl_multivariate_normal(mu0,
                            cov0,
@@ -180,3 +261,17 @@ def euclidean_multivariate_normal(mu0,
   mean_diff = linalg.safe_l2norm(mu0 - mu1)
   cov_diff = linalg.safe_l2norm((cov0 - cov1).flatten())
   return mean_weight * mean_diff + cov_weight * cov_diff
+
+
+def normal_param_from_samples(samples):
+    return scipy.stats.norm.fit(samples, method='MLE')
+
+
+def gamma_param_from_samples(samples):
+    fit_a, _, fit_scale = scipy.stats.gamma.fit(samples, floc=0, method='MLE')
+    fit_b = 1 / fit_scale
+    return fit_a, fit_b
+
+
+def lognormal_param_from_samples(samples):
+    return scipy.stats.lognorm.fit(samples, method='MLE')
