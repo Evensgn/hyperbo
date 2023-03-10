@@ -599,7 +599,8 @@ def hpob_dataset_v2(search_space_index, hpob_data_path=None, negative_y=False, o
     return dataset
 
 
-def hpob_dataset_v3(search_space_index, hpob_data_path=None, negative_y=False, output_log_warp=False, normalize_x=True, normalize_y=True):
+def hpob_dataset_v3(search_space_index, hpob_data_path=None, negative_y=False, output_log_warp=False, normalize_x=True,
+                    normalize_y=True, read_init_index=False):
     """Load the original finite hpob dataset by search space.
     Args:
       search_space_index: string of a search space. See https://arxiv.org/pdf/2106.06257.pdf Table 3 for reference.
@@ -678,8 +679,10 @@ def hpob_dataset_v3(search_space_index, hpob_data_path=None, negative_y=False, o
 
         test_dataset[dataset_id] = SubDataset(x=x, y=y)
 
-    # init_index = handler.bo_initializations[search_space]
-    init_index = None
+    if read_init_index:
+        init_index = handler.bo_initializations[search_space]
+    else:
+        init_index = None
 
     return {'train': train_dataset, 'validation': validation_dataset, 'test': test_dataset, 'init_index': init_index}
 

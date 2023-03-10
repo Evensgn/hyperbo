@@ -42,13 +42,13 @@ if __name__ == '__main__':
     normalize_x = True
     normalize_y = True
 
-    is_hpob = True
+    is_hpob = IS_HPOB
+
+    train_id_list = TRAIN_ID_LIST
+    test_id_list = TEST_ID_LIST
+    setup_b_id_list = FULL_ID_LIST
 
     if is_hpob:
-        train_id_list = HPOB_TRAIN_ID_LIST
-        test_id_list = HPOB_TEST_ID_LIST
-        setup_b_id_list = HPOB_FULL_ID_LIST
-
         hpob_negative_y = False
         hpob_data_path = HPOB_DATA_PATH
         dataset_func_combined = partial(data.hpob_dataset_v2, hpob_data_path=hpob_data_path, negative_y=hpob_negative_y,
@@ -58,74 +58,81 @@ if __name__ == '__main__':
         dataset_dim_feature_values_path = HPOB_DATA_ANALYSIS_PATH
         extra_info = 'hpob_negative_y: {}, noramlize_x: {}, normalize_y: {}'.format(hpob_negative_y, normalize_x, normalize_y)
     else:
-        train_id_list = list(range(16))
-        test_id_list = list(range(16, 20))
-        setup_b_id_list = list(range(20))
-
         train_id_list = [str(x) for x in train_id_list]
         test_id_list = [str(x) for x in test_id_list]
         setup_b_id_list = [str(x) for x in setup_b_id_list]
         synthetic_data_path = SYNTHETIC_DATA_PTH
-        dataset_func_combined = partial(data.hyperbo_plus_synthetic_dataset_combined, synthetic_data_path, normalize_x=normalize_x, normalize_y=normalize_y)
-        dataset_func_split = partial(data.hyperbo_plus_synthetic_dataset_split, synthetic_data_path, normalize_x=normalize_x, normalize_y=normalize_y)
+        dataset_func_combined = partial(data.hyperbo_plus_synthetic_dataset_combined, synthetic_data_path,
+                                        normalize_x=normalize_x, normalize_y=normalize_y)
+        dataset_func_split = partial(data.hyperbo_plus_synthetic_dataset_split, synthetic_data_path,
+                                     normalize_x=normalize_x, normalize_y=normalize_y)
         dataset_dim_feature_values_path = SYNTHETIC_DATA_ANALYSIS_PATH
         extra_info = 'synthetic_data_path = \'{}\', noramlize_x: {}, normalize_y: {}'.format(synthetic_data_path, normalize_x, normalize_y)
 
     random_seed = RANDOM_SEED
 
-    fit_gp_maxiter = 10000  # 50000 for adam (5000 ~ 6.5 min per id), 500 for lbfgs
+    fit_gp_maxiter = 10  # 10000  # 50000 for adam (5000 ~ 6.5 min per id), 500 for lbfgs
     fit_gp_batch_size = 50  # 50 for adam, 300 for lbfgs
     fit_gp_adam_learning_rate = 0.001
 
-    fit_hgp_maxiter = 10000
+    fit_hgp_maxiter = 10  # 10000
     fit_hgp_batch_size = 50
     fit_hgp_adam_learning_rate = 0.001
 
-    fit_two_step_maxiter = 1000
+    fit_two_step_maxiter = 10  # 1000
     fit_two_step_learning_rate = 0.01
 
     n_init_obs = 5
-    budget = 50  # 50
+    budget = 3  # 50
     n_bo_runs = 5
-    n_bo_gamma_samples = 100  # 100
-    n_nll_gamma_samples = 500  # 500
-    setup_a_nll_sub_dataset_level = True
+    n_bo_gp_params_samples = 5  # 100
+    n_nll_gp_params_samples = 5  # 500
     bo_sub_sample_batch_size = None  # 1000 for hpob, 300 for synthetic 4, 1000 for synthetic 5
 
     eval_nll_batch_size = 100  # 300
     eval_nll_n_batches = 10
     ac_func_type_list = ['ucb', 'ei', 'pi']
 
-    fixed_gp_distribution_params = {
+    hand_hgp_params = {
         'constant': (0.0, 1.0),
         'lengthscale': (1.0, 10.0),
         'signal_variance': (1.0, 5.0),
         'noise_variance': (10.0, 100.0)
     }
 
-    uniform_gp_distribution_params = {
+    uniform_hgp_params = {
         'constant': (-100, 100.0),
         'lengthscale': (0.001, 10.0),
         'signal_variance': (0.000001, 100.0),
         'noise_variance': (0.00000001, 100.0)
     }
 
+    method_name_list = ['random', 'hyperbo', 'hand_hgp', 'uniform_hgp', 'fit_direct_hgp', 'fit_direct_hgp_leaveout',
+                        'hpl_hgp_end_to_end', 'hpl_hgp_end_to_end_leaveout', 'hpl_hgp_end_to_end_from_scratch',
+                        'hpl_hgp_end_to_end_leaveout_from_scratch', 'hpl_hgp_two_step', 'hpl_hgp_two_step_leaveout']
+    setup_b_only_method_name_list = ['hyperbo', 'fit_direct_hgp_leaveout', 'hpl_hgp_end_to_end_leaveout',
+                                     'hpl_hgp_end_to_end_leaveout_from_scratch', 'hpl_hgp_two_step_leaveout']
+
     if is_hpob:
-        gt_gp_distribution_params = None
+        gt_hgp_params = None
     else:
         # ground truth for synthetic 4
-        gt_gp_distribution_params = {
+        gt_hgp_params = {
             'constant': (1.0, 1.0),
             'lengthscale': (10.0, 30.0),
             'signal_variance': (1.0, 1.0),
             'noise_variance': (10.0, 100000.0)
         }
+        method_name_list.append('gt_hgp')
 
     kernel_type = ('matern52 adam', kernel.matern52, obj.nll, obj.neg_log_marginal_likelihood_hgp_v3, 'adam')
+    mean_func = mean.constant
     distribution_type = 'gamma'
-    init_params_value_setup_b_path = INIT_PARAMS_VALUE_SETUP_B_PATH
+    fitting_node_cpu_count = FITTING_NODE_CPU_COUNT
+    bo_node_cpu_count = BO_NODE_CPU_COUNT
+    nll_node_cpu_count = NLL_NODE_CPU_COUNT
 
-    split_dir = os.path.join(results_dir, 'test_hyperbo_plus_split')
+    split_dir = os.path.join(results_dir, 'hpl_bo_split')
     dir_path = os.path.join(split_dir, group_id)
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
@@ -159,21 +166,27 @@ if __name__ == '__main__':
         'n_init_obs': n_init_obs,
         'budget': budget,
         'n_bo_runs': n_bo_runs,
-        'n_bo_gamma_samples': n_bo_gamma_samples,
-        'n_nll_gamma_samples': n_nll_gamma_samples,
-        'setup_a_nll_sub_dataset_level': setup_a_nll_sub_dataset_level,
+        'n_bo_gp_params_samples': n_bo_gp_params_samples,
+        'n_nll_gp_params_samples': n_nll_gp_params_samples,
         'bo_sub_sample_batch_size': bo_sub_sample_batch_size,
         'eval_nll_batch_size': eval_nll_batch_size,
         'eval_nll_n_batches': eval_nll_n_batches,
         'ac_func_type_list': ac_func_type_list,
 
-        'fixed_gp_distribution_params': fixed_gp_distribution_params,
-        'uniform_gp_distribution_params': uniform_gp_distribution_params,
-        'gt_gp_distribution_params': gt_gp_distribution_params,
+        'hand_hgp_params': hand_hgp_params,
+        'uniform_hgp_params': uniform_hgp_params,
+        'gt_hgp_params': gt_hgp_params,
 
         'kernel_type': kernel_type,
+        'mean_func': mean_func,
         'distribution_type': distribution_type,
-        'init_params_value_setup_b_path': init_params_value_setup_b_path,
+
+        'fitting_node_cpu_count': fitting_node_cpu_count,
+        'bo_node_cpu_count': bo_node_cpu_count,
+        'nll_node_cpu_count': nll_node_cpu_count,
+
+        'method_name_list': method_name_list,
+        'setup_b_only_method_name_list': setup_b_only_method_name_list,
     }
     np.save(os.path.join(dir_path, 'configs.npy'), configs)
 

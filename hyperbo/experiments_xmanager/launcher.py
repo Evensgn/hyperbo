@@ -5,7 +5,7 @@ import time
 import itertools
 import jax
 import os
-from experiment_defs import GROUP_ID, RANDOM_SEED, TRAIN_ID_LIST, TEST_ID_LIST, FULL_ID_LIST
+from experiment_defs import *
 
 
 def print_and_say(s):
