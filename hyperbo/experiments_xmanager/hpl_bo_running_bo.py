@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import os
-from multiprocessing import Pool
+from pathos.multiprocessing import ProcessingPool
 
 
 from hpl_bo_utils import get_gp_params_samples_from_direct_hgp, get_gp_params_samples_from_hpl_hgp
@@ -103,15 +103,24 @@ def test_bo(key, pool, dataset, cov_func, mean_func, n_init_obs, init_indices_va
             bo_sub_sample_batch_size, distribution_type, dim_feature_value, method_name_list):
     n_dim = list(dataset.values())[0].x.shape[1]
 
-    # sub sample each sub dataset for large datasets
-    key, subkey = jax.random.split(key, 2)
-    dataset_iter = data_utils.sub_sample_dataset_iterator(
-        subkey, dataset, bo_sub_sample_batch_size)
-    dataset = next(dataset_iter)
+    if bo_sub_sample_batch_size is not None:
+        # sub sample each sub dataset for large datasets
+        key, subkey = jax.random.split(key, 2)
+        dataset_iter = data_utils.sub_sample_dataset_iterator(
+            subkey, dataset, bo_sub_sample_batch_size)
+        dataset = next(dataset_iter)
+    else:
+        '''
+        # set the sub-sample size to the largest sub-dataset length
+        for sub_dataset in dataset.values():
+            if bo_sub_sample_batch_size is None or sub_dataset.x.shape[0] > bo_sub_sample_batch_size:
+                bo_sub_sample_batch_size = sub_dataset.x.shape[0]
+        '''
 
     # sample init_indices
     init_indices_map = {}
     for sub_dataset_key, sub_dataset in dataset.items():
+        init_indices_map[sub_dataset_key] = {}
         for i in range(n_bo_runs):
             if n_init_obs == 0:
                 init_indices_map[sub_dataset_key][i] = None
@@ -204,9 +213,10 @@ def test_bo(key, pool, dataset, cov_func, mean_func, n_init_obs, init_indices_va
                 task_list.append((cov_func, mean_func, n_dim, gp_params, gp_params_samples, n_bo_gp_params_samples,
                                   sub_dataset, init_indices, pass_ac_func, budget, bo_sub_sample_batch_size,
                                   method_name))
-        print('task_list constructed, number of tasks: {}'.format(len(task_list)))
+    print('task_list constructed, number of tasks: {}'.format(len(task_list)))
 
     if pool is not None:
+        print('using pool')
         task_outputs = pool.map(run_bo, task_list)
     else:
         task_outputs = []
@@ -239,7 +249,7 @@ def split_test_bo_setup_a_id(dir_path, key, test_id, dataset_func_combined, cov_
     if bo_node_cpu_count is None or bo_node_cpu_count <= 1:
         pool = None
     else:
-        pool = Pool(processes=bo_node_cpu_count)
+        pool = ProcessingPool(bo_node_cpu_count)
 
     dim_feature_value = np.load(dataset_dim_feature_values_path, allow_pickle=True).item()[test_id]
 
@@ -256,13 +266,13 @@ def split_test_bo_setup_a_id(dir_path, key, test_id, dataset_func_combined, cov_
     # read fit hpl hgp params
     if 'hpl_hgp_end_to_end' in setup_a_method_name_list:
         hpl_hgp_end_to_end_params = np.load(os.path.join(dir_path, 'split_fit_hpl_hgp_end_to_end_setup_a.npy'),
-                                            allow_pickle=True).item()
+                                            allow_pickle=True).item()['gp_params']
     else:
         hpl_hgp_end_to_end_params = None
     if 'hpl_hgp_end_to_end_from_scratch' in setup_a_method_name_list:
         hpl_hgp_end_to_end_from_scratch_params = np.load(
             os.path.join(dir_path, 'split_fit_hpl_hgp_end_to_end_setup_a_from_scratch.npy'),
-            allow_pickle=True).item()
+            allow_pickle=True).item()['gp_params']
     else:
         hpl_hgp_end_to_end_from_scratch_params = None
     if 'hpl_hgp_two_step' in setup_a_method_name_list:
@@ -315,7 +325,7 @@ def split_test_bo_setup_b_id(dir_path, key, test_id, dataset_func_split, cov_fun
     if bo_node_cpu_count is None or bo_node_cpu_count <= 1:
         pool = None
     else:
-        pool = Pool(processes=bo_node_cpu_count)
+        pool = ProcessingPool(bo_node_cpu_count)
 
     dim_feature_value = np.load(dataset_dim_feature_values_path, allow_pickle=True).item()[test_id]
 
@@ -343,24 +353,25 @@ def split_test_bo_setup_b_id(dir_path, key, test_id, dataset_func_split, cov_fun
     # read fit hpl hgp params
     if 'hpl_hgp_end_to_end' in method_name_list:
         hpl_hgp_end_to_end_params = np.load(os.path.join(dir_path, 'split_fit_hpl_hgp_end_to_end_setup_b.npy'),
-                                            allow_pickle=True).item()
+                                            allow_pickle=True).item()['gp_params']
     else:
         hpl_hgp_end_to_end_params = None
     if 'hpl_hgp_end_to_end_leaveout' in method_name_list:
         hpl_hgp_end_to_end_leaveout_params = np.load(
             os.path.join(dir_path, 'split_fit_hpl_hgp_end_to_end_setup_b_leaveout_{}.npy'.format(test_id)),
-            allow_pickle=True).item()
+            allow_pickle=True).item()['gp_params']
     else:
         hpl_hgp_end_to_end_leaveout_params = None
     if 'hpl_hgp_end_to_end_from_scratch' in method_name_list:
         hpl_hgp_end_to_end_from_scratch_params = np.load(
-            os.path.join(dir_path, 'split_fit_hpl_hgp_end_to_end_setup_b_from_scratch.npy'), allow_pickle=True).item()
+            os.path.join(dir_path, 'split_fit_hpl_hgp_end_to_end_setup_b_from_scratch.npy'),
+            allow_pickle=True).item()['gp_params']
     else:
         hpl_hgp_end_to_end_from_scratch_params = None
     if 'hpl_hgp_end_to_end_leaveout_from_scratch' in method_name_list:
         hpl_hgp_end_to_end_leaveout_from_scratch_params = np.load(
             os.path.join(dir_path, 'split_fit_hpl_hgp_end_to_end_setup_b_leaveout_{}_from_scratch.npy'.format(test_id)),
-            allow_pickle=True).item()
+            allow_pickle=True).item()['gp_params']
     else:
         hpl_hgp_end_to_end_leaveout_from_scratch_params = None
     if 'hpl_hgp_two_step' in method_name_list:

@@ -170,10 +170,10 @@ def simulated_bayesopt_with_gp_params_samples(
 
   params_j_list = []
   for j in range(n_bo_gp_params_samples):
-      constant_j = [constants[j]]
+      constant_j = constants[j:j+1]
       lengthscale_j = lengthscales[j]
-      signal_variance_j = [signal_variances[j]]
-      noise_variance_j = [noise_variances[j]]
+      signal_variance_j = signal_variances[j:j+1]
+      noise_variance_j = noise_variances[j:j+1]
       params_j_list.append(jnp.concatenate((constant_j, lengthscale_j, signal_variance_j, noise_variance_j)))
 
   true_len = queried_sub_dataset.x.shape[0]

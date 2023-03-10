@@ -4,7 +4,7 @@ from hyperbo.gp_utils import objectives as obj
 import jax
 import jax.numpy as jnp
 import numpy as np
-from multiprocessing import Pool
+from pathos.multiprocessing import ProcessingPool
 import os
 
 from hpl_bo_utils import get_gp_params_samples_from_direct_hgp, get_gp_params_samples_from_hpl_hgp
@@ -19,7 +19,7 @@ def nll_on_sub_dataset(run_args):
         gp_params,
         dataset,
         warp_func=None,
-        exclude_aligned=True
+        exclude_aligned=True,
     )
 
 
@@ -69,7 +69,7 @@ def nll_sub_dataset_level_with_gp_params_samples(key, pool, dataset, cov_func, m
                         'noise_variance': noise_variances[i]
                     }
                 )
-                task_list.append((params_sample, mean_func, cov_func, sub_dataset))
+                task_list.append((params_sample, cov_func, mean_func, sub_dataset))
             if pool is not None:
                 task_outputs = pool.map(nll_on_sub_dataset, task_list)
             else:
@@ -91,7 +91,7 @@ def split_eval_nll_setup_a_id(dir_path, key, dataset_id, dataset_func_combined, 
     if nll_node_cpu_count is None or nll_node_cpu_count <= 1:
         pool = None
     else:
-        pool = Pool(processes=nll_node_cpu_count)
+        pool = ProcessingPool(nll_node_cpu_count)
 
     dataset = dataset_func_combined(dataset_id)
     n_dim = list(dataset.values())[0].x.shape[1]
@@ -138,7 +138,7 @@ def split_eval_nll_setup_a_id(dir_path, key, dataset_id, dataset_func_combined, 
     # read fit hpl hgp params
     if 'hpl_hgp_end_to_end' in setup_a_method_name_list:
         hpl_hgp_end_to_end_params = np.load(os.path.join(dir_path, 'split_fit_hpl_hgp_end_to_end_setup_a.npy'),
-                                            allow_pickle=True).item()
+                                            allow_pickle=True).item()['gp_params']
         new_key, key = jax.random.split(key, 2)
         gp_params_samples = get_gp_params_samples_from_hpl_hgp(new_key, hpl_hgp_end_to_end_params, distribution_type,
                                                                n_nll_gp_params_samples, n_dim, dim_feature_value)
@@ -148,7 +148,7 @@ def split_eval_nll_setup_a_id(dir_path, key, dataset_id, dataset_func_combined, 
     if 'hpl_hgp_end_to_end_from_scratch' in setup_a_method_name_list:
         hpl_hgp_end_to_end_from_scratch_params = np.load(
             os.path.join(dir_path, 'split_fit_hpl_hgp_end_to_end_setup_a_from_scratch.npy'),
-            allow_pickle=True).item()
+            allow_pickle=True).item()['gp_params']
         new_key, key = jax.random.split(key, 2)
         gp_params_samples = get_gp_params_samples_from_hpl_hgp(new_key, hpl_hgp_end_to_end_from_scratch_params,
                                                                 distribution_type, n_nll_gp_params_samples, n_dim,
@@ -176,7 +176,7 @@ def split_eval_nll_setup_b_id(dir_path, key, train_or_test, dataset_id, dataset_
     if nll_node_cpu_count is None or nll_node_cpu_count <= 1:
         pool = None
     else:
-        pool = Pool(processes=nll_node_cpu_count)
+        pool = ProcessingPool(nll_node_cpu_count)
 
     if train_or_test == 'train':
         dataset = dataset_func_split(dataset_id)['train']  # only use train set
@@ -192,10 +192,11 @@ def split_eval_nll_setup_b_id(dir_path, key, train_or_test, dataset_id, dataset_
 
     # read hyperbo gp params
     if 'hyperbo' in method_name_list:
-        hyperbo_gp_parmas = np.load(
+        hyperbo_gp_params = np.load(
             os.path.join(dir_path, 'split_fit_gp_params_setup_b_id_{}.npy'.format(dataset_id)),
-            allow_pickle=True).item()
-        results['hyperbo'] = nll_sub_dataset_level_with_gp(key, dataset, cov_func, mean_func, hyperbo_gp_parmas,
+            allow_pickle=True).item()['gp_params']
+        gp_params = defs.GPParams(model=hyperbo_gp_params)
+        results['hyperbo'] = nll_sub_dataset_level_with_gp(key, dataset, cov_func, mean_func, gp_params,
                                                            eval_nll_batch_size, eval_nll_n_batches)
 
     if 'hand_hgp' in method_name_list:
@@ -244,7 +245,7 @@ def split_eval_nll_setup_b_id(dir_path, key, train_or_test, dataset_id, dataset_
     # read fit hpl hgp params
     if 'hpl_hgp_end_to_end' in method_name_list:
         hpl_hgp_end_to_end_params = np.load(os.path.join(dir_path, 'split_fit_hpl_hgp_end_to_end_setup_b.npy'),
-                                            allow_pickle=True).item()
+                                            allow_pickle=True).item()['gp_params']
         new_key, key = jax.random.split(key, 2)
         gp_params_samples = get_gp_params_samples_from_hpl_hgp(new_key, hpl_hgp_end_to_end_params, distribution_type,
                                                                n_nll_gp_params_samples, n_dim, dim_feature_value)
@@ -254,7 +255,7 @@ def split_eval_nll_setup_b_id(dir_path, key, train_or_test, dataset_id, dataset_
     if 'hpl_hgp_end_to_end_leaveout' in method_name_list:
         hpl_hgp_end_to_end_leaveout_params = np.load(
             os.path.join(dir_path, 'split_fit_hpl_hgp_end_to_end_setup_b_leaveout_{}.npy'.format(dataset_id)),
-            allow_pickle=True).item()
+            allow_pickle=True).item()['gp_params']
         new_key, key = jax.random.split(key, 2)
         gp_params_samples = get_gp_params_samples_from_hpl_hgp(new_key, hpl_hgp_end_to_end_leaveout_params,
                                                                distribution_type, n_nll_gp_params_samples, n_dim,
@@ -265,7 +266,7 @@ def split_eval_nll_setup_b_id(dir_path, key, train_or_test, dataset_id, dataset_
     if 'hpl_hgp_end_to_end_from_scratch' in method_name_list:
         hpl_hgp_end_to_end_from_scratch_params = np.load(
             os.path.join(dir_path, 'split_fit_hpl_hgp_end_to_end_setup_b_from_scratch.npy'),
-            allow_pickle=True).item()
+            allow_pickle=True).item()['gp_params']
         new_key, key = jax.random.split(key, 2)
         gp_params_samples = get_gp_params_samples_from_hpl_hgp(new_key, hpl_hgp_end_to_end_from_scratch_params,
                                                                distribution_type, n_nll_gp_params_samples, n_dim,
@@ -277,7 +278,7 @@ def split_eval_nll_setup_b_id(dir_path, key, train_or_test, dataset_id, dataset_
         hpl_hgp_end_to_end_leaveout_from_scratch_params = np.load(
             os.path.join(dir_path,
                          'split_fit_hpl_hgp_end_to_end_setup_b_leaveout_{}_from_scratch.npy'.format(dataset_id)),
-            allow_pickle=True).item()
+            allow_pickle=True).item()['gp_params']
         new_key, key = jax.random.split(key, 2)
         gp_params_samples = get_gp_params_samples_from_hpl_hgp(new_key, hpl_hgp_end_to_end_leaveout_from_scratch_params,
                                                                distribution_type, n_nll_gp_params_samples, n_dim,

@@ -126,11 +126,11 @@ def split_fit_hpl_hgp_two_step(dir_path, key, setup, train_id_list, fit_two_step
 
     model_params['search_space_params'] = {}
     fit_gp_results = {}
-    for id in train_id_list:
-        gp_params = np.load(os.path.join(dir_path, 'split_fit_gp_params_setup_{}_id_{}.npy'.format(setup, id)),
+    for train_id in train_id_list:
+        gp_params = np.load(os.path.join(dir_path, 'split_fit_gp_params_setup_{}_id_{}.npy'.format(setup, train_id)),
                             allow_pickle=True).item()['gp_params']
-        fit_gp_results[id] = gp_params
-        model_params['search_space_params'][id] = gp_params
+        fit_gp_results[train_id] = gp_params
+        model_params['search_space_params'][train_id] = gp_params
         constant_list.append(gp_params['constant'])
         signal_variance_list.append(gp_params['signal_variance'])
         noise_variance_list.append(gp_params['noise_variance'])
@@ -149,9 +149,9 @@ def split_fit_hpl_hgp_two_step(dir_path, key, setup, train_id_list, fit_two_step
         def loss_func(lengthscale_dist_mlp_params):
             lengthscale_model = bf.MLP(lengthscale_dist_mlp_features)
             loss = 0.
-            for id in train_id_list:
-                gp_params = fit_gp_results[id]
-                dim_feature_value = dim_feature_values[id]
+            for train_id in train_id_list:
+                gp_params = fit_gp_results[train_id]
+                dim_feature_value = dim_feature_values[train_id]
                 lengthscale = gp_params['lengthscale']
                 lengthscale_dist_params = lengthscale_model.apply({'params': lengthscale_dist_mlp_params},
                                                                   dim_feature_value)
@@ -304,6 +304,10 @@ def split_fit_hpl_hgp_end_to_end(dir_path, key, setup, train_id_list, dataset_fu
                                  dataset_dim_feature_values_path, cov_func, mean_func, objective, opt_method,
                                  fit_hgp_maxiter, fit_hgp_batch_size, fit_hgp_adam_learning_rate, distribution_type,
                                  use_init_params_value=True, leaveout_id=None):
+    if leaveout_id is not None:
+        assert (setup == 'b')
+        train_id_list = [train_id for train_id in train_id_list if train_id != leaveout_id]
+
     super_dataset = {}
     for train_id in train_id_list:
         if setup == 'a':
@@ -317,7 +321,6 @@ def split_fit_hpl_hgp_end_to_end(dir_path, key, setup, train_id_list, dataset_fu
     dim_feature_values = np.load(dataset_dim_feature_values_path, allow_pickle=True).item()
     if use_init_params_value:
         if leaveout_id is not None:
-            assert (setup == 'b')
             init_params_value_path = os.path.join(
                 dir_path, 'split_fit_hpl_hgp_two_step_setup_b_leaveout_{}.npy'.format(leaveout_id))
         else:

@@ -144,8 +144,9 @@ def infer_parameters(mean_func,
     current_loss = loss_func(model_param, batch)
     if jnp.isfinite(current_loss):
       params.model = model_param
+    keys = list(params.model.keys())
     retrieved_params = dict(
-    zip(keys, retrieve_params(params, keys, warp_func=hgp_warp_func)))
+        zip(keys, retrieve_params(params, keys, warp_func=hgp_warp_func)))
     print('Training finished. loss: {}'.format(current_loss))
     if params_save_file is not None:
       np.save(params_save_file, retrieved_params)

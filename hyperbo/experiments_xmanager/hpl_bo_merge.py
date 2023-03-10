@@ -71,13 +71,15 @@ def split_merge(dir_path, group_id, configs):
     for method_name in setup_a_method_name_list:
         # BO results
         results_a['bo_results'][method_name] = {}
+        results_a['bo_results_total'][method_name] = {}
         for ac_func_type in ac_func_type_list:
             results_a['bo_results'][method_name][ac_func_type] = {}
 
             regrets_all_list = []
 
             for test_id in test_id_list:
-                results_a['bo_results'][method_name][ac_func_type][test_id] = bo_results_a[ac_func_type][method_name]
+                results_a['bo_results'][method_name][ac_func_type][test_id] = \
+                    bo_results_a[test_id][ac_func_type][method_name]
 
             for i in range(n_bo_runs):
                 regrets_all_list_i = []
@@ -207,20 +209,22 @@ def split_merge(dir_path, group_id, configs):
 
     for method_name in method_name_list:
         # BO results
-        results_a['bo_results'][method_name] = {}
+        results_b['bo_results'][method_name] = {}
+        results_b['bo_results_total'][method_name] = {}
         for ac_func_type in ac_func_type_list:
-            results_a['bo_results'][method_name][ac_func_type] = {}
+            results_b['bo_results'][method_name][ac_func_type] = {}
 
             regrets_all_list = []
 
-            for test_id in test_id_list:
-                results_a['bo_results'][method_name][ac_func_type][test_id] = bo_results_a[ac_func_type][method_name]
+            for test_id in setup_b_id_list:
+                results_b['bo_results'][method_name][ac_func_type][test_id] = \
+                    bo_results_b[test_id][ac_func_type][method_name]
 
             for i in range(n_bo_runs):
                 regrets_all_list_i = []
 
-                for test_id in test_id_list:
-                    regrets_ij = results_a['bo_results'][method_name][ac_func_type][test_id]['regrets_list'][i]
+                for test_id in setup_b_id_list:
+                    regrets_ij = results_b['bo_results'][method_name][ac_func_type][test_id]['regrets_list'][i]
                     regrets_all_list_i.append(regrets_ij)
 
                 regrets_all_list.append(jnp.mean(jnp.array(regrets_all_list_i), axis=0))
@@ -229,7 +233,7 @@ def split_merge(dir_path, group_id, configs):
             regrets_mean_total = jnp.mean(regrets_all_list, axis=0)
             regrets_std_total = jnp.std(regrets_all_list, axis=0)
 
-            results_a['bo_results_total'][method_name][ac_func_type] = {
+            results_b['bo_results_total'][method_name][ac_func_type] = {
                 'regrets_all_list': regrets_all_list,
                 'regrets_mean': regrets_mean_total,
                 'regrets_std': regrets_std_total,
@@ -251,7 +255,7 @@ def split_merge(dir_path, group_id, configs):
         for k in range(eval_nll_n_batches):
             nll_on_test_list.append([])
         for test_id in setup_b_id_list:
-            fixed_nll_on_test_batches_i = nll_results_a[test_id]['test'][method_name]
+            fixed_nll_on_test_batches_i = nll_results_b[test_id]['test'][method_name]
             for k in range(eval_nll_n_batches):
                 nll_on_test_list[k].append(fixed_nll_on_test_batches_i[k])
 

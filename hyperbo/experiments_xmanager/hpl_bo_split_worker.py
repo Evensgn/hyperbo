@@ -103,7 +103,7 @@ if __name__ == '__main__':
                                    leaveout_id=args.dataset_id)
 
     elif args.mode == 'fit_hpl_hgp_end_to_end_setup_a':
-        split_fit_hpl_hgp_end_to_end(dir_path, key, 'a', setup_b_id_list, dataset_func_combined, dataset_func_split,
+        split_fit_hpl_hgp_end_to_end(dir_path, key, 'a', train_id_list, dataset_func_combined, dataset_func_split,
                                      dataset_dim_feature_values_path, cov_func, mean_func, hgp_objective, opt_method,
                                      fit_hgp_maxiter, fit_hgp_batch_size, fit_hgp_adam_learning_rate, distribution_type,
                                      use_init_params_value=True)
@@ -118,7 +118,7 @@ if __name__ == '__main__':
                                      fit_hgp_maxiter, fit_hgp_batch_size, fit_hgp_adam_learning_rate, distribution_type,
                                      use_init_params_value=True, leaveout_id=args.dataset_id)
     elif args.mode == 'fit_hpl_hgp_end_to_end_setup_a_no_init':
-        split_fit_hpl_hgp_end_to_end(dir_path, key, 'a', setup_b_id_list, dataset_func_combined, dataset_func_split,
+        split_fit_hpl_hgp_end_to_end(dir_path, key, 'a', train_id_list, dataset_func_combined, dataset_func_split,
                                      dataset_dim_feature_values_path, cov_func, mean_func, hgp_objective, opt_method,
                                      fit_hgp_maxiter, fit_hgp_batch_size, fit_hgp_adam_learning_rate, distribution_type,
                                      use_init_params_value=False)
@@ -127,6 +127,11 @@ if __name__ == '__main__':
                                      dataset_dim_feature_values_path, cov_func, mean_func, hgp_objective, opt_method,
                                      fit_hgp_maxiter, fit_hgp_batch_size, fit_hgp_adam_learning_rate, distribution_type,
                                      use_init_params_value=False)
+    elif args.mode == 'fit_hpl_hgp_end_to_end_setup_b_leaveout_no_init':
+        split_fit_hpl_hgp_end_to_end(dir_path, key, 'b', setup_b_id_list, dataset_func_combined, dataset_func_split,
+                                     dataset_dim_feature_values_path, cov_func, mean_func, hgp_objective, opt_method,
+                                     fit_hgp_maxiter, fit_hgp_batch_size, fit_hgp_adam_learning_rate, distribution_type,
+                                     use_init_params_value=False, leaveout_id=args.dataset_id)
 
     elif args.mode == 'test_bo_setup_a_id':
         split_test_bo_setup_a_id(dir_path, key, args.dataset_id, dataset_func_combined, cov_func, mean_func, n_init_obs,

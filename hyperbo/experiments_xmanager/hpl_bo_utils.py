@@ -64,11 +64,10 @@ def get_gp_params_samples_from_hpl_hgp(key, hpl_hgp_params, distribution_type, n
     noise_variances = noise_variance_dist.sample(n_gp_params_samples, seed=new_key)
 
     # sample lengthscales
+    lengthscale_dist_mlp_features = (2,)
     if distribution_type == 'gamma':
-        lengthscale_dist_mlp_features = hpl_hgp_params['lengthscale_gamma_mlp_features']
         lengthscale_dist_mlp_params = hpl_hgp_params['lengthscale_gamma_mlp_params']
     elif distribution_type == 'lognormal':
-        lengthscale_dist_mlp_features = hpl_hgp_params['lengthscale_lognormal_mlp_features']
         lengthscale_dist_mlp_params = hpl_hgp_params['lengthscale_lognormal_mlp_params']
     else:
         raise ValueError('Unknown distribution type: {}'.format(distribution_type))
