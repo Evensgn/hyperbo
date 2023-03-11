@@ -9,7 +9,7 @@ from experiment_defs import *
 
 def print_and_say(s):
     print(s)
-    os.system('say -v Samantha {}'.format(s))
+    # os.system('say -v Samantha {}'.format(s))
 
 
 @xm.run_in_asyncio_loop
@@ -22,7 +22,7 @@ async def main(_):
         print_and_say('run config')
 
         spec = xm.PythonContainer(
-            path='/Users/zfan/code/bo_research/hyperbo',
+            path='/home/zfan/hyperbo',
             base_image='python:3.7.11',
             entrypoint=xm.CommandList([
                 'python3 hyperbo/experiments_xmanager/hpl_bo_split_config.py',
@@ -61,7 +61,7 @@ async def main(_):
         print_and_say('fit single GP')
 
         spec = xm.PythonContainer(
-            path='/Users/zfan/code/bo_research/hyperbo',
+            path='/home/zfan/hyperbo',
             base_image='python:3.7.11',
             entrypoint=xm.CommandList([
                 'python3 hyperbo/experiments_xmanager/hpl_bo_split_worker.py $@',
@@ -127,7 +127,7 @@ async def main(_):
         print_and_say('fit two-step HGP')
 
         spec = xm.PythonContainer(
-            path='/Users/zfan/code/bo_research/hyperbo',
+            path='/home/zfan/hyperbo',
             base_image='python:3.7.11',
             entrypoint=xm.CommandList([
                 'python3 hyperbo/experiments_xmanager/hpl_bo_split_worker.py $@',
@@ -245,7 +245,7 @@ async def main(_):
         print_and_say('fit end-to-end HGP')
 
         spec = xm.PythonContainer(
-            path='/Users/zfan/code/bo_research/hyperbo',
+            path='/home/zfan/hyperbo',
             base_image='python:3.7.11',
             entrypoint=xm.CommandList([
                 'python3 hyperbo/experiments_xmanager/hpl_bo_split_worker.py $@',
@@ -363,7 +363,7 @@ async def main(_):
         print_and_say('run BO')
 
         spec = xm.PythonContainer(
-            path='/Users/zfan/code/bo_research/hyperbo',
+            path='/home/zfan/hyperbo',
             base_image='python:3.7.11',
             entrypoint=xm.CommandList([
                 'python3 hyperbo/experiments_xmanager/hpl_bo_split_worker.py $@',
@@ -429,7 +429,7 @@ async def main(_):
         print_and_say('evaluate NLL')
 
         spec = xm.PythonContainer(
-            path='/Users/zfan/code/bo_research/hyperbo',
+            path='/home/zfan/hyperbo',
             base_image='python:3.7.11',
             entrypoint=xm.CommandList([
                 'python3 hyperbo/experiments_xmanager/hpl_bo_split_worker.py $@',
@@ -510,7 +510,7 @@ async def main(_):
         print_and_say('merge results')
 
         spec = xm.PythonContainer(
-            path='/Users/zfan/code/bo_research/hyperbo',
+            path='/home/zfan/hyperbo',
             base_image='python:3.7.11',
             entrypoint=xm.CommandList([
                 'python3 hyperbo/experiments_xmanager/hpl_bo_split_worker.py $@',

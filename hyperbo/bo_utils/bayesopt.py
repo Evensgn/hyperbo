@@ -30,13 +30,13 @@ import jaxopt
 import numpy as np
 import tensorflow as tf
 from tensorflow_probability.substrates.jax.distributions import Gamma
-import botorch
-from botorch.models.gp_regression import SingleTaskGP
-from botorch.fit import fit_gpytorch_model
-from gpytorch.mlls import ExactMarginalLogLikelihood
-from botorch.optim import optimize_acqf_discrete
-import torch
-from botorch.acquisition import ExpectedImprovement, UpperConfidenceBound, ProbabilityOfImprovement
+# import botorch
+# from botorch.models.gp_regression import SingleTaskGP
+# from botorch.fit import fit_gpytorch_model
+# from gpytorch.mlls import ExactMarginalLogLikelihood
+# from botorch.optim import optimize_acqf_discrete
+# import torch
+# from botorch.acquisition import ExpectedImprovement, UpperConfidenceBound, ProbabilityOfImprovement
 
 
 SubDataset = defs.SubDataset
@@ -411,6 +411,7 @@ def run_synthetic(dataset,
             sub_dataset.y), None, model.params.__dict__
 
 
+'''
 def run_bo_with_botorch(dataset,
                   sub_dataset_key,
                   queried_sub_dataset,
@@ -486,6 +487,7 @@ def run_bo_with_botorch(dataset,
       sub_dataset = SubDataset(x=new_x, y=new_y)
       last_state_dict = model.state_dict()
   return (sub_dataset.x, sub_dataset.y), (queried_sub_dataset.x, queried_sub_dataset.y), None
+'''
 
 
 def run_bo_with_gp_params_samples(
