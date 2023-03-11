@@ -1,4 +1,4 @@
-GROUP_ID = 'hpl_bo_new_full_hpob_0'
+GROUP_ID = 'hpl_bo_new_full_hpob_budget_100_0'
 RANDOM_SEED = 0
 
 IS_HPOB = True

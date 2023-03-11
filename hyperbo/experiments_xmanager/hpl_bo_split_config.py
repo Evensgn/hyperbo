@@ -80,10 +80,10 @@ if __name__ == '__main__':
     fit_hgp_adam_learning_rate = 0.001
 
     fit_two_step_maxiter = 5000
-    fit_two_step_learning_rate = 0.005
+    fit_two_step_learning_rate = 0.01
 
     n_init_obs = 5
-    budget = 50  # 50
+    budget = 100  # 50
     n_bo_runs = 5
     n_bo_gp_params_samples = 100  # 100
     n_nll_gp_params_samples = 500  # 500

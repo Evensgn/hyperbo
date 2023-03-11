@@ -30,7 +30,6 @@ setup(
         'tensorflow>=2.5.0',
         'xgboost',
         'pathos',
-        'botorch',
     ],
     extras_require={},
     classifiers=[
