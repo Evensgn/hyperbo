@@ -267,8 +267,8 @@ async def main(_):
         ])
 
         requirements = xm.JobRequirements(
-            cpu=FITTING_NODE_CPU_COUNT,
-            ram=4 * FITTING_NODE_CPU_COUNT * xm.GiB,
+            cpu=FITTING_E2E_NODE_CPU_COUNT,
+            ram=4 * FITTING_E2E_NODE_CPU_COUNT * xm.GiB,
         )
 
         work_units = []

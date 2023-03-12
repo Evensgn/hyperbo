@@ -35,6 +35,7 @@ if IS_GCP:
     HPOB_DATA_ANALYSIS_PATH = '/gcs/bayesopt/zfan/bayesopt_datasets/hpob-data/data_analysis.npy'
     SYNTHETIC_DATA_ANALYSIS_PATH = '/gcs/bayesopt/zfan/bayesopt_datasets/synthetic_data/data_analysis.npy'
     FITTING_NODE_CPU_COUNT = 8
+    FITTING_E2E_NODE_CPU_COUNT = 16
     BO_NODE_CPU_COUNT = 60
     NLL_NODE_CPU_COUNT = 60
     BASIC_CPU_COUNT = 4
@@ -45,5 +46,6 @@ else:
     HPOB_DATA_ANALYSIS_PATH = '../hpob-data/data_analysis.npy'
     SYNTHETIC_DATA_ANALYSIS_PATH = '../synthetic_data/data_analysis.npy'
     FITTING_NODE_CPU_COUNT = 4
+    FITTING_E2E_NODE_CPU_COUNT = 4
     BO_NODE_CPU_COUNT = 4
     NLL_NODE_CPU_COUNT = 4
