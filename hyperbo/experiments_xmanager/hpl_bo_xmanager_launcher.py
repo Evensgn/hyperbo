@@ -45,7 +45,7 @@ async def main(_):
 
         requirements = xm.JobRequirements(
             cpu=BASIC_CPU_COUNT,
-            ram=4 * BASIC_CPU_COUNT * xm.GiB,
+            ram=3.9 * BASIC_CPU_COUNT * xm.GiB,
         )
 
         job = xm.Job(
@@ -57,6 +57,8 @@ async def main(_):
         await work_unit.wait_until_complete()
 
         time_1 = time.time()
+
+        '''
 
         print_and_say('fit single GP')
 
@@ -84,7 +86,7 @@ async def main(_):
 
         requirements = xm.JobRequirements(
             cpu=FITTING_NODE_CPU_COUNT,
-            ram=4 * FITTING_NODE_CPU_COUNT * xm.GiB,
+            ram=3.9 * FITTING_NODE_CPU_COUNT * xm.GiB,
         )
 
         work_units = []
@@ -150,7 +152,7 @@ async def main(_):
 
         requirements = xm.JobRequirements(
             cpu=FITTING_NODE_CPU_COUNT,
-            ram=4 * FITTING_NODE_CPU_COUNT * xm.GiB,
+            ram=3.9 * FITTING_NODE_CPU_COUNT * xm.GiB,
         )
 
         work_units = []
@@ -241,6 +243,8 @@ async def main(_):
             await work_unit.wait_until_complete()
 
         time_3 = time.time()
+        
+        '''
 
         print_and_say('fit end-to-end HGP')
 
@@ -268,7 +272,7 @@ async def main(_):
 
         requirements = xm.JobRequirements(
             cpu=FITTING_E2E_NODE_CPU_COUNT,
-            ram=4 * FITTING_E2E_NODE_CPU_COUNT * xm.GiB,
+            ram=3.9 * FITTING_E2E_NODE_CPU_COUNT * xm.GiB,
         )
 
         work_units = []
@@ -285,6 +289,7 @@ async def main(_):
             }
         )
         work_units.append(await experiment.add(job))
+
 
         new_key, key = jax.random.split(key)
         job = xm.Job(
@@ -314,6 +319,7 @@ async def main(_):
             )
             work_units.append(await experiment.add(job))
 
+        '''
         new_key, key = jax.random.split(key)
         job = xm.Job(
             executable=executable,
@@ -354,6 +360,7 @@ async def main(_):
                 }
             )
             work_units.append(await experiment.add(job))
+        '''
 
         for work_unit in work_units:
             await work_unit.wait_until_complete()
@@ -386,7 +393,7 @@ async def main(_):
 
         requirements = xm.JobRequirements(
             cpu=BO_NODE_CPU_COUNT,
-            ram=4 * BO_NODE_CPU_COUNT * xm.GiB,
+            ram=3.9 * BO_NODE_CPU_COUNT * xm.GiB,
         )
 
         work_units = []
@@ -452,7 +459,7 @@ async def main(_):
 
         requirements = xm.JobRequirements(
             cpu=NLL_NODE_CPU_COUNT,
-            ram=4 * NLL_NODE_CPU_COUNT * xm.GiB,
+            ram=3.9 * NLL_NODE_CPU_COUNT * xm.GiB,
         )
 
         work_units = []
@@ -533,7 +540,7 @@ async def main(_):
 
         requirements = xm.JobRequirements(
             cpu=BO_NODE_CPU_COUNT,
-            ram=4 * BO_NODE_CPU_COUNT * xm.GiB,
+            ram=3.9 * BO_NODE_CPU_COUNT * xm.GiB,
         )
 
         new_key, key = jax.random.split(key)
@@ -556,8 +563,8 @@ async def main(_):
 
         print_and_say('total time: {}'.format(time_7 - time_0))
         print_and_say('config time: {}'.format(time_1 - time_0))
-        print_and_say('fit single GP time: {}'.format(time_2 - time_1))
-        print_and_say('fit two-step GP time: {}'.format(time_3 - time_2))
+        # print_and_say('fit single GP time: {}'.format(time_2 - time_1))
+        # print_and_say('fit two-step GP time: {}'.format(time_3 - time_2))
         print_and_say('fit end-to-end GP time: {}'.format(time_4 - time_4))
         print_and_say('run BO time: {}'.format(time_5 - time_4))
         print_and_say('evaluate NLL time: {}'.format(time_6 - time_5))

@@ -1,4 +1,4 @@
-GROUP_ID = 'hpl_bo_new_full_hpob_budget_100_0'
+GROUP_ID = 'hpl_bo_new_full_hpob_budget_100_1'
 RANDOM_SEED = 0
 
 IS_HPOB = True
@@ -35,7 +35,7 @@ if IS_GCP:
     HPOB_DATA_ANALYSIS_PATH = '/gcs/bayesopt/zfan/bayesopt_datasets/hpob-data/data_analysis.npy'
     SYNTHETIC_DATA_ANALYSIS_PATH = '/gcs/bayesopt/zfan/bayesopt_datasets/synthetic_data/data_analysis.npy'
     FITTING_NODE_CPU_COUNT = 8
-    FITTING_E2E_NODE_CPU_COUNT = 16
+    FITTING_E2E_NODE_CPU_COUNT = 8
     BO_NODE_CPU_COUNT = 60
     NLL_NODE_CPU_COUNT = 60
     BASIC_CPU_COUNT = 4

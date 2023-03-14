@@ -279,13 +279,16 @@ class HGP_E2E_v3:
     logging.info(msg=f'params = {self.params}')
     return self.params
 
-  def neg_log_marginal_likelihood_hgp(self) -> float:
+  def neg_log_marginal_likelihood_hgp(self, key, batch_size) -> float:
     """Compute negative log marginal likelihood for current model."""
+    key, new_key = jax.random.split(key, 2)
+    dataset_iter = data_utils.sub_sample_super_dataset_iterator(new_key, self.super_dataset, batch_size)
+    batch = next(dataset_iter)
     return obj.neg_log_marginal_likelihood_hgp_v3(
         mean_func=self.mean_func,
         cov_func=self.cov_func,
         params=self.params,
-        super_dataset=self.super_dataset,
+        super_dataset=batch,
         dim_feature_values=self.dim_feature_values,
         hgp_warp_func=self.hgp_warp_func,
         single_gp_warp_func=self.single_gp_warp_func,

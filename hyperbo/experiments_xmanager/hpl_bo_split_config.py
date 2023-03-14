@@ -75,7 +75,7 @@ if __name__ == '__main__':
     fit_gp_batch_size = 50  # 50 for adam, 300 for lbfgs
     fit_gp_adam_learning_rate = 0.001
 
-    fit_hgp_maxiter = 10000
+    fit_hgp_maxiter = 2000
     fit_hgp_batch_size = 50
     fit_hgp_adam_learning_rate = 0.001
 
@@ -107,11 +107,19 @@ if __name__ == '__main__':
         'noise_variance': (0.00000001, 100.0)
     }
 
+    '''
     method_name_list = ['random', 'hyperbo', 'hand_hgp', 'uniform_hgp', 'fit_direct_hgp', 'fit_direct_hgp_leaveout',
                         'hpl_hgp_end_to_end', 'hpl_hgp_end_to_end_leaveout', 'hpl_hgp_end_to_end_from_scratch',
                         'hpl_hgp_end_to_end_leaveout_from_scratch', 'hpl_hgp_two_step', 'hpl_hgp_two_step_leaveout']
     setup_b_only_method_name_list = ['hyperbo', 'fit_direct_hgp_leaveout', 'hpl_hgp_end_to_end_leaveout',
                                      'hpl_hgp_end_to_end_leaveout_from_scratch', 'hpl_hgp_two_step_leaveout']
+    '''
+
+    method_name_list = ['random', 'hyperbo', 'hand_hgp', 'uniform_hgp', 'fit_direct_hgp', 'fit_direct_hgp_leaveout',
+                        'hpl_hgp_end_to_end', 'hpl_hgp_end_to_end_leaveout', 'hpl_hgp_two_step',
+                        'hpl_hgp_two_step_leaveout']
+    setup_b_only_method_name_list = ['hyperbo', 'fit_direct_hgp_leaveout', 'hpl_hgp_end_to_end_leaveout',
+                                     'hpl_hgp_two_step_leaveout']
 
     if is_hpob:
         gt_hgp_params = None

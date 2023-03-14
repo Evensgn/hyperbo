@@ -281,13 +281,16 @@ def fit_hpl_hgp_end_to_end(key, super_dataset, dim_feature_values, cov_func, mea
     )
 
     init_key, key = jax.random.split(key)
-
     model.initialize_params(init_key)
 
-    init_nll = model.neg_log_marginal_likelihood_hgp()
+    new_key, key = jax.random.split(key)
+    init_nll = model.neg_log_marginal_likelihood_hgp(key, fit_hgp_batch_size)
+
     new_key, key = jax.random.split(key)
     inferred_params = model.train(key=new_key)
-    inferred_nll = model.neg_log_marginal_likelihood_hgp()
+
+    new_key, key = jax.random.split(key)
+    inferred_nll = model.neg_log_marginal_likelihood_hgp(key, fit_hgp_batch_size)
 
     param_keys = init_params.model.keys()
     retrieved_inferred_params = dict(
@@ -308,8 +311,11 @@ def split_fit_hpl_hgp_end_to_end(dir_path, key, setup, train_id_list, dataset_fu
         assert (setup == 'b')
         train_id_list = [train_id for train_id in train_id_list if train_id != leaveout_id]
 
+    print('split_fit_hpl_hgp_end_to_end: train_id_list = {}'.format(train_id_list))
+
     super_dataset = {}
     for train_id in train_id_list:
+        print('read train_id = {}'.format(train_id))
         if setup == 'a':
             dataset = dataset_func_combined(train_id)
         elif setup == 'b':
@@ -329,7 +335,10 @@ def split_fit_hpl_hgp_end_to_end(dir_path, key, setup, train_id_list, dataset_fu
     else:
         init_params_value = None
 
+    print('read dim_feature_values done')
+
     new_key, key = jax.random.split(key)
+    print('start fit_hpl_hgp_end_to_end')
     gp_params, nll_logs = fit_hpl_hgp_end_to_end(new_key, super_dataset, dim_feature_values, cov_func, mean_func,
                                                  objective, opt_method, fit_hgp_maxiter, fit_hgp_batch_size,
                                                  fit_hgp_adam_learning_rate, distribution_type, init_params_value)
